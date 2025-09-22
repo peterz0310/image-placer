@@ -1,476 +1,220 @@
-# Image Placer (Placeit-style) — Web App (Next.js)
+# Image Placer
 
-A lightweight, **generic** web tool to place, skew, (optionally warp), and mask overlay images onto a base image, then **export**:
+A web-based image composition tool for creating professional product mockups by placing and transforming overlay images onto base images. Similar to Placeit-style mockup generators, but with full creative control and exportable project files.
 
-- a **ZIP** containing:
-  - the **original base** image (as provided),
-  - all **original overlay** images,
-  - a **rendered composite** (PNG),
-  - a **project JSON** (precise placements, transforms, masks, blend, z-order, etc.).
+## Overview
 
-Designed for product mockups like **nail designs on model hands**, but generic enough for packaging, apparel, screens, posters, etc.
+Image Placer allows users to create professional product mockups by:
 
----
+- Loading a base image (e.g., model hand, packaging template, device mockup)
+- Adding multiple overlay images with precise positioning and transformations
+- Applying advanced effects like perspective warping and vector masking
+- Exporting structured JSON data for use in other applications and live image placement
+- Generating complete project packages with all assets and settings preserved
 
-## Table of Contents
+Perfect for creating nail design mockups, product packaging visualizations, screen mockups, apparel designs, and more. The exported JSON transforms can be used to dynamically place images in real-time applications.
 
-1. [Goals & Non-Goals](#goals--non-goals)
-2. [Tech Stack](#tech-stack)
-3. [Core Concepts](#core-concepts)
-4. [Data Model (Project JSON Schema)](#data-model-project-json-schema)
-5. [App Architecture](#app-architecture)
-6. [User Flows](#user-flows)
-7. [Rendering & Algorithms](#rendering--algorithms)
-8. [Export: ZIP Bundle](#export-zip-bundle)
-9. [Implementation Plan (Step-by-Step)](#implementation-plan-step-by-step)
-10. [UI/UX Details](#uiux-details)
-11. [Performance & Quality](#performance--quality)
+## Key Features
 
----
+### Transform Controls
 
-## Goals & Non-Goals
+- **Precise positioning**: Move, scale, rotate, and skew overlays with visual handles and numeric inputs
+- **Perspective warping**: Optional 4-corner quad warping for realistic perspective effects
+- **Resolution independence**: All transforms stored in normalized coordinates for consistent results
 
-### Goals
+### Advanced Composition
 
-- **Simple, focused editor**: a base image “stage” where users add multiple overlays and position/transform them.
-- **Transforms**: translate, scale, rotate, skew (with numeric controls). Optional **perspective warp** via 4-corner quad.
-- **Masking**: per-overlay vector polygon masks (with feather radius); invert toggle.
-- **Blending**: per-overlay opacity and blend modes (Normal, Multiply, Screen, Overlay, etc. where supported).
-- **Guides**: snapping, rulers, and safe margins.
-- **Export**: ZIP with (1) original base, (2) original overlay assets, (3) composite PNG render, (4) **Project JSON**.
-- **Repeatable**: all transforms normalized to the base image intrinsic size → renders are exact and reproducible anywhere.
-- **All-client**: works offline as a PWA (no server needed) and keeps assets in memory/IndexedDB.
+- **Vector masking**: Create custom polygon masks with adjustable feather for smooth edges
+- **Blend modes**: Support for standard blend modes (Normal, Multiply, Screen, Overlay, etc.)
+- **Layer management**: Full layer stack with opacity, visibility, and z-order controls
+- **Color adjustments**: Per-layer exposure, contrast, and saturation controls
 
-### Non-Goals
+### Professional Export
 
-- Full Photoshop replacement. Keep the scope tight: placement, basic warps, masks, and a great export story.
-- Multi-page layouts (v1 is single canvas per project).
-- Text layers (optional later).
+- **Complete project packages**: ZIP files containing original assets, rendered composite, and project JSON
+- **Reproducible results**: Projects can be reopened and re-rendered with identical output
+- **Multiple resolutions**: Export at base resolution or custom scaling factors
+- **Portable JSON transforms**: Structured data format for integration with other applications
+- **Client-side processing**: No server-side dependencies for core functionality
 
----
+## Technical Architecture
 
-## Tech Stack
+### Core Technologies
 
-- **Framework**: Next.js 14+ (App Router, Client Components for the editor).
-- **Canvas Layer**: **Fabric.js** (robust 2D transforms + JSON), plus a **WebGL Warp** mode (optional) using **Three.js** with a textured Plane for true 4-corner perspective warps.
-  - Rationale: Fabric for fast iteration/handles/selection; Three.js plane for perspective when toggled.
-- **Mask Rasterization**: OffscreenCanvas via **Web Worker** for feathered polygon masks (fast, non-blocking).
-- **Blend Modes**: Canvas2D globalCompositeOperation fallback; where not exact, approximate in the final renderer using custom shader in WebGL composite.
-- **State Storage**: Zustand (or Redux-lite with Zustand) + IndexedDB for autosave drafts.
-- **Export ZIP**: **JSZip** (client side).
-- **Image Encoding**: Canvas `.toDataURL()` / `.toBlob()`; WebGL readPixels for composite if needed.
-- **TypeScript** everywhere.
+- **Next.js 14+** with App Router for the web application framework
+- **Fabric.js** for 2D canvas manipulation and transform handles
+- **Three.js** for perspective warping with WebGL-based quad deformation
+- **Web Workers** with OffscreenCanvas for mask rasterization and image processing
+- **TypeScript** throughout for type safety and better development experience
 
----
+### Canvas System
 
-## Core Concepts
+The editor uses a dual-canvas approach:
 
-- **Base image**: the “photo” or “mockup background” (e.g., model hand). Defines the **intrinsic coordinate system** (width x height).
-- **Layer**: an overlay image with transforms, optional **quad** warp, optional **mask polygon**, blend, opacity, z-order.
-- **Normalized Units**: positions/vertices stored as 0..1 relative to base width/height → resolution independent.
-- **Render Target**: on export, choose output resolution (default = base intrinsic) to ensure 1:1 fidelity.
+- **Fabric.js canvas** handles standard 2D transforms (move, scale, rotate, skew) with interactive handles
+- **Three.js WebGL overlay** provides perspective warping when quad mode is enabled
+- **Worker-based processing** handles computationally intensive tasks like mask rendering
 
----
+### Data Model
 
-## Data Model (Project JSON Schema)
+Projects are stored as JSON with normalized coordinates (0-1 range) relative to the base image dimensions, ensuring resolution independence and reproducible results across different display sizes and export resolutions. This structured format is designed for easy integration with other applications that need to apply the same transforms dynamically.
 
-Versioned, human-readable, resolution-independent.
-
-```jsonc
+```json
 {
   "version": 1,
-  "projectId": "uuid-v4",
-  "title": "My Mockup",
-  "createdAt": "2025-09-22T05:00:00.000Z",
-  "updatedAt": "2025-09-22T05:00:00.000Z",
   "base": {
     "name": "model-hand.png",
-    "src": "blob:or/dataurl/or/relative/path",
-    "width": 1200,        // intrinsic pixels of the base image
+    "width": 1200,
     "height": 1600
-  },
-  "canvas": {
-    "background": "#00000000",
-    "dpi": 72,             // metadata only; render uses pixel dimensions
-    "safeMargin": { "top": 0, "right": 0, "bottom": 0, "left": 0 } // normalized 0..1
   },
   "layers": [
     {
-      "id": "uuid-v4",
-      "name": "overlay-1.png",
-      "src": "blob:/dataurl/or/relative/path",
-      "originalSize": { "w": 800, "h": 1200 }, // intrinsic of overlay
-      "visible": true,
-      "locked": false,
-      "opacity": 1.0,
-      "blendMode": "normal", // normal|multiply|screen|overlay|darken|lighten|(fallback to normal if unsupported)
-      "zIndex": 0,
-
-      // Transform in normalized space (no warp)
+      "id": "uuid",
+      "name": "overlay.png",
       "transform": {
-        "left": 0.50,    // normalized 0..1 stage space (center after rotation)
-        "top": 0.50,     // normalized
-        "scaleX": 0.25,  // relative to overlay intrinsic width
+        "left": 0.50,
+        "top": 0.50,
+        "scaleX": 0.25,
         "scaleY": 0.25,
-        "angle": 0.0,    // degrees
-        "skewX": 0.0,    // degrees
-        "skewY": 0.0     // degrees
+        "angle": 15.0
       },
-
-      // Optional perspective quad warp (replaces transform for final render if enabled)
-      // 4 points in normalized stage space, clockwise TL, TR, BR, BL
       "quad": {
         "enabled": false,
-        "points": [
-          { "x": 0.40, "y": 0.40 },
-          { "x": 0.60, "y": 0.40 },
-          { "x": 0.58, "y": 0.55 },
-          { "x": 0.42, "y": 0.56 }
-        ],
-        // when enabled, the overlay image maps so [0,0],[1,0],[1,1],[0,1] → TL,TR,BR,BL
-        "keepAspect": true // if true, maintain overlay aspect while mapping
+        "points": [...]
       },
-
-      // Optional vector mask (normalized polygon)
       "mask": {
-        "enabled": false,
-        "invert": false,
-        "feather": 2.0,              // px at render time (absolute in output pixels)
-        "path": [
-          { "x": 0.48, "y": 0.35 },
-          { "x": 0.62, "y": 0.36 },
-          { "x": 0.63, "y": 0.46 },
-          { "x": 0.47, "y": 0.45 }
-        ]
+        "enabled": true,
+        "path": [...],
+        "feather": 2.0
       },
-
-      // Optional per-layer color adjustments (applied before blend)
-      "adjust": {
-        "enabled": false,
-        "exposure": 0.0,  // -2..+2 stops
-        "contrast": 0.0,  // -100..+100
-        "saturation": 0.0 // -100..+100
-      },
-
-      // Arbitrary metadata (e.g., tags/finger IDs)
-      "meta": { "finger": "index", "variant": "glossy" }
+      "opacity": 0.8,
+      "blendMode": "multiply"
     }
-  ],
-  "meta": {
-    "notes": "Freeform notes for operators",
-    "tags": ["mockup", "v1"]
-  }
+  ]
 }
-Notes
-
-If quad.enabled = true, the quad mapping is the source of truth for shape; transform is still stored for UI handles but final render uses the quad.
-
-mask.feather is in output pixels for predictable softness regardless of stage size.
-
-App Architecture
-pgsql
-Copy code
-/app
-  /editor
-    page.tsx            // Editor route
-    /components
-      Stage.tsx         // Fabric canvas + overlay of handles
-      OverlayItem.tsx   // Wrapper to connect Fabric objects ↔ Layer state
-      WarpOverlay.tsx   // Quad handles & Three.js plane preview
-      MaskEditor.tsx    // Polygon drawing, feather preview
-      Toolbar.tsx       // Add image, zoom, snapping, blend, opacity controls
-      LayerList.tsx     // Reorder, visibility/lock, rename
-      ExportPanel.tsx   // Composite settings and Export ZIP
-    /lib
-      fabricHelpers.ts  // Fabric init, object creation, snapping, keyboard
-      warpMath.ts       // quad<->triangulation, UV mapping, barycentric helpers
-      maskWorker.ts     // worker wrapper (compile polygon to 8-bit alpha mask)
-      composite.ts      // final composite pipeline (2D or WebGL)
-      zip.ts            // JSZip helpers (gather assets + JSON + composite)
-      schema.ts         // JSON schema, migrations
-  layout.tsx
-  page.tsx              // Landing page (Create/Open Project)
-State Management: Zustand store holding project, selection, ui (zoom, snap, rulers), history (+ undo/redo stack).
-
-Canvas: Fabric canvas for selection/transform handles. When Warp Mode is toggled for a layer, Fabric object is ghosted; a Quad Handle Overlay controls four corner points; preview is a Three.js plane textured with the overlay image.
-
-Mask Editor: polygon tool (click to add, backspace to delete, close path to finish). Feather preview via shader blur or fast separable Gaussian in worker.
-
-User Flows
-New Project
-
-Upload base image (drag/drop or file picker).
-
-Stage resizes to base intrinsic dimensions (fit to viewport with zoom).
-
-Project JSON initialized.
-
-Add Overlay
-
-Upload PNG/JPG.
-
-Layer appears centered; Fabric handles for move/scale/rotate/skew.
-
-Name defaults to file name; can rename in Layer List.
-
-Adjust Layer
-
-Transform Mode: use Fabric controls; numeric inputs show/read: X, Y (normalized), angle, skewX/Y, scale.
-
-Warp Mode (toggle): show 4 corner handles; drag to shape; Three.js plane renders perspective warp preview.
-
-Mask Mode: draw polygon; toggle invert; set feather.
-
-Styling
-
-Opacity slider; Blend Mode dropdown.
-
-Optional basic adjustments (exposure/contrast/saturation).
-
-Guides & Snapping
-
-Toggle rulers; drag guides; snapping to guides/edges/centers; show safe margins.
-
-Save/Load
-
-Export Project JSON (download).
-
-Import a Project JSON (re-linking assets if embedded as data URLs, or prompt to locate missing files).
-
-Autosave drafts in IndexedDB (optional).
-
-Export ZIP
-
-Choose output pixel size (default = base intrinsic).
-
-Render final composite (2D or WebGL pipeline based on warps/blends).
-
-Package ZIP:
-
-/project.json – full state (with normalized transforms).
-
-/render.png – composite at selected resolution.
-
-/assets/base/<original name> – unmodified base.
-
-/assets/layers/<id>-<original name> – unmodified overlays.
-
-Download ZIP.
-
-Rendering & Algorithms
-A) Non-Warp (Fabric)
-Fabric applies transform matrix (translation/rotation/scale/skew).
-
-For blend modes not supported in Fabric’s live preview, emulate in composite step.
-
-B) Perspective Warp (Three.js Plane)
-When layer.quad.enabled, build a textured plane subdivided into a small grid (e.g., 32×32).
-
-Map the overlay image UVs to the quad corners; the plane deforms to match projected quad.
-
-For final composite:
-
-Render each layer in order to an offscreen WebGL framebuffer with alpha.
-
-Apply blend/opacity in shader.
-
-Apply mask: rasterize polygon to an alpha texture (via worker), then multiply alpha in shader.
-
-Result combined into the main framebuffer.
-
-C) Masking (Polygon → Alpha)
-In a Web Worker:
-
-Create an OffscreenCanvas at output size.
-
-Draw polygon filled white on black background.
-
-Apply Gaussian blur with sigma = feather / 2.0 to get soft edge.
-
-Return ImageBitmap/ArrayBuffer as an 8-bit alpha texture.
-
-In 2D pipeline, clip via globalCompositeOperation or use the alpha image as source-in/destination-in.
-
-D) Normalization
-Store all positions as 0..1 of base dimensions.
-
-Render: multiply normalized coords by render width/height to get pixel coords. Masks recomputed at output resolution for correct feather.
-
-Export: ZIP Bundle
-Structure
-
-sql
-Copy code
-my-project-YYYYMMDD-HHMM.zip
-├─ project.json
-├─ render.png
-└─ assets/
-   ├─ base/
-   │  └─ model-hand.png
-   └─ layers/
-      ├─ 8a1f..-overlay-1.png
-      ├─ 7c39..-overlay-2.png
-      └─ ...
-project.json
-
-Contains relative paths to assets inside ZIP (assets/...) and all normalized transforms.
-
-Optional embedded: true per asset if including data URIs (default: store raw files).
-
-ZIP Creation (JSZip)
-
-Collect blobs: base, each overlay, rendered PNG, project.json stringified.
-
-zip.generateAsync({ type: "blob" }) → download via a link.
-
-Implementation Plan (Step-by-Step)
-0) Scaffold
-pnpm dlx create-next-app@latest image-placer --ts --eslint --src-dir --app --tailwind
-
-Install deps:
-
-pnpm add fabric three zustand jszip
-
-Optional: pnpm add zod (schema), pnpm add idb-keyval (IndexedDB helper)
-
-1) Project Store (Zustand)
-useProjectStore with:
-
-project (matches schema),
-
-actions: setBase, addLayer, updateLayer(id, patch), reorder, removeLayer,
-
-selection state (selectedId), undo/redo stacks.
-
-2) Base Loader
-Component to pick base file; read as blob URL; read intrinsic Image width/height → set project base.
-
-3) Canvas (Fabric) for Transform Mode
-Initialize Fabric canvas at base intrinsic size.
-
-On window resize, scale viewport (CSS scale) + maintain zoom/pan.
-
-For each layer with quad.enabled=false, create fabric.Image with:
-
-left, top (pixel coords = normalized * base size),
-
-angle, skewX, skewY, scaleX, scaleY.
-
-Sync Fabric ↔ store on changes (object:modified, selection:created, etc.).
-
-Keyboard shortcuts: Delete, ⌘G for group (later), arrows to nudge, Shift for proportional.
-
-4) Warp Mode (Quad Handles + Three.js preview)
-Overlay 4 draggable corner handles positioned by normalized quad points.
-
-Convert quad to a subdivided grid plane in Three.js; texture with overlay image.
-
-Updating a corner recomputes geometry; draw over Fabric canvas for live preview.
-
-If user disables Warp Mode → compute best-fit affine/skew back to Fabric transforms (optional), else keep warp only.
-
-5) Mask Editor
-Polygon pen tool: click to add points, hover preview segment, close to commit.
-
-Store normalized polygon; show live feather preview (draw to temp OffscreenCanvas and composite alpha).
-
-Toggle invert; numeric feather input.
-
-6) Blending & Adjustments
-UI panel for opacity, blend mode, exposure/contrast/saturation.
-
-For live preview, use:
-
-Fabric blend fallback (limited), or
-
-a “Preview Composite” button that renders a quick WebGL pass.
-
-7) Guides & Snapping
-Rulers (top/left), draggable guides; snapping to guides and object bounds/centers.
-
-Safe margins (normalized) visualized.
-
-8) Export Composite
-Choose output size (default = base intrinsic; allow custom like 2×/4×).
-
-If any layer has warp enabled or unsupported blend:
-
-Use WebGL composite pipeline:
-
-For each layer in sorted z:
-
-Apply color adjustments in shader.
-
-If mask.enabled, sample alpha texture.
-
-Blend with current framebuffer.
-
-Else: can use 2D canvas with Fabric’s toCanvasElement() plus manual blend passes.
-
-Get PNG blob.
-
-9) Export ZIP
-Build project.json with:
-
-normalized transforms, quads, masks, blend, adjust, z-order.
-
-asset relative paths inside ZIP.
-
-Add:
-
-assets/base/<name> (original blob),
-
-assets/layers/<id>-<name> for each overlay,
-
-render.png,
-
-project.json.
-
-Generate + download.
-
-10) Import Project
-Load project.json; prompt user to supply missing assets if not included (or embedded).
-
-Reconstruct layers on canvas.
-
-11) Persistence (Optional)
-Autosave to IndexedDB on debounce (1s).
-
-“Restore draft?” toast on landing if draft exists.
-
-UI/UX Details
-Top Toolbar: Open Base, Add Overlay, Transform / Warp / Mask toggles, Zoom, Undo/Redo, Export.
-
-Right Panel:
-
-Layer List with eye/lock, drag-to-reorder, rename.
-
-Selected Layer props:
-
-Position/Size (normalized + pixel readout), Angle, Skew, Scale lock.
-
-Warp: coordinates of 4 corners (editable text).
-
-Mask: feather (px), invert toggle, edit button.
-
-Styling: opacity, blend mode, exposure/contrast/sat.
-
-Bottom Bar: Zoom %, pixel cursor readout, snap indicator, “Safe margin” toggles.
-
-Accessibility:
-
-Keyboard focus, ARIA labels, tooltips, visible focus ring.
-
-Numeric fields with fine/coarse step via Shift/Alt.
-
-Performance & Quality
-Large Images: Cap preview canvas to ~4096 px max dimension; use downscaled preview in editor, but export at full resolution.
-
-Workers: Mask rasterization & blur in a Web Worker with OffscreenCanvas.
-
-Memory: Revoke object URLs for images on layer removal.
-
-Precision: Store normalized values in JSON; computations use base intrinsic converted to output pixels at render time.
-
-Color: Assume sRGB; avoid device color management surprises by sticking to standard 8-bit PNGs.
 ```
+
+## User Workflow
+
+1. **Project Setup**: Load base image which defines the canvas dimensions and coordinate system
+2. **Layer Creation**: Add overlay images that appear as new layers in the stack
+3. **Transform Editing**: Use visual handles or numeric inputs to position and transform layers
+4. **Advanced Effects**:
+   - Enable quad warping for perspective effects
+   - Create vector masks for custom shapes
+   - Adjust blend modes and opacity
+5. **Export**: Generate ZIP containing original assets, composite render, and project JSON with transform data for use in other applications
+
+## Rendering Pipeline
+
+### Standard Mode
+
+For layers without warping, the system uses Fabric.js's built-in transform matrix calculations with Canvas2D rendering.
+
+### Warp Mode
+
+When perspective warping is enabled:
+
+1. Overlay image is mapped to a subdivided Three.js plane geometry
+2. Plane vertices are positioned according to the quad corner points
+3. WebGL shaders handle the perspective-correct texture mapping
+4. Result is composited with other layers
+
+### Masking
+
+Vector masks are processed via Web Workers:
+
+1. Polygon path is rasterized to an alpha channel at output resolution
+2. Gaussian blur is applied based on feather radius
+3. Resulting alpha mask is applied during final composition
+
+### Export Rendering
+
+Final composite generation supports both Canvas2D and WebGL pipelines depending on the features used, ensuring optimal performance while maintaining quality.
+
+## Getting Started
+
+### Running the Application
+
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+2. **Start the development server:**
+   ```bash
+   npm run dev
+   ```
+
+3. **Open your browser and navigate to:**
+   ```
+   http://localhost:3000
+   ```
+
+### Basic Usage
+
+1. **Load a Base Image**: Click "Load Base Image" and select your background image
+2. **Add Overlays**: Click "Add Overlay" to add images that will be positioned on top of the base image
+3. **Transform Layers**: 
+   - Use the interactive handles on the canvas to move, scale, and rotate layers
+   - Use the properties panel on the right for precise numeric control
+   - Adjust opacity, blend modes, and visibility
+4. **Export Your Work**:
+   - **Export JSON**: Save just the project data with normalized coordinates
+   - **Export ZIP**: Save complete project package with original assets, composite render, and project JSON
+
+### Features Implemented
+
+✅ **Core MVP Features:**
+- Base image loading and display
+- Overlay image upload and layer management
+- Interactive Fabric.js canvas with transform handles
+- Precise numeric controls for positioning, scale, rotation, and skew
+- Layer opacity and blend mode controls
+- JSON export with normalized coordinates (resolution-independent)
+- ZIP export with complete project package including:
+  - Original assets (base image and overlays)
+  - Composite PNG render
+  - Project JSON file
+- Project loading from JSON files
+- Layer visibility and lock controls
+
+🔮 **Advanced Features (Future Implementation):**
+- Perspective warping with Three.js and WebGL
+- Vector polygon masking with feather effects
+- Web Worker-based mask processing
+
+## Development Considerations
+
+### Performance
+
+- **Image downsampling**: Preview canvas limited to 4K dimensions for smooth editing
+- **Worker processing**: Mask generation and heavy computations moved to Web Workers
+- **Memory management**: Automatic cleanup of blob URLs and unused resources
+- **Optimized rendering**: Smart invalidation to redraw only when necessary
+
+### Quality Assurance
+
+- **Normalized coordinates**: Prevents precision loss when scaling between different resolutions
+- **sRGB color space**: Consistent color handling across devices
+- **High-resolution export**: Full-quality rendering regardless of preview canvas size
+
+### Accessibility
+
+- **Keyboard navigation**: Full keyboard support for all editing functions
+- **Screen reader compatibility**: Proper ARIA labels and semantic HTML
+- **Visual indicators**: Clear focus states and interaction feedback
+- **Flexible input methods**: Both visual handles and numeric inputs for precise control
+
+## Project Goals
+
+This project aims to provide:
+
+- **Professional-grade output** suitable for commercial use
+- **Intuitive interface** accessible to non-technical users
+- **Complete project portability** with self-contained export files
+- **Structured transform data** for integration with live image placement systems
+- **Predictable results** that render identically across different environments
+- **Flexible deployment** with client-side processing (can be hosted anywhere)
+
+The scope is intentionally focused on image placement and basic transformations, with particular emphasis on generating precise JSON transform data that can be consumed by other applications for real-time image composition.
