@@ -39,6 +39,18 @@ export default function ImagePlacer() {
     return () => clearInterval(interval);
   }, [canvasState.tool]);
 
+  // Update canvas selection when selectedLayerId changes
+  useEffect(() => {
+    if (fabricCanvasRef.current) {
+      if (canvasState.selectedLayerId) {
+        fabricCanvasRef.current.selectLayer(canvasState.selectedLayerId);
+      } else {
+        // Clear selection when no layer is selected
+        fabricCanvasRef.current.clearSelection();
+      }
+    }
+  }, [canvasState.selectedLayerId]);
+
   const handleLayerUpdate = useCallback(
     (layerId: string, updates: Partial<Layer>) => {
       setProject((prev) => {
@@ -144,6 +156,7 @@ export default function ImagePlacer() {
         },
         mask: {
           enabled: false,
+          visible: true,
           path: [],
           feather: 0,
         },
@@ -167,6 +180,13 @@ export default function ImagePlacer() {
             }
           : null
       );
+
+      // Switch to transform mode and select the new layer
+      setCanvasState((prev) => ({
+        ...prev,
+        selectedLayerId: newLayer.id,
+        tool: "select",
+      }));
     };
     reader.readAsDataURL(file);
 
@@ -233,6 +253,13 @@ export default function ImagePlacer() {
         const projectJson = await projectFile.async("string");
         const projectData = JSON.parse(projectJson) as Project;
 
+        // Add backward compatibility for mask visibility
+        projectData.layers.forEach((layer) => {
+          if (layer.mask && typeof layer.mask.visible === "undefined") {
+            layer.mask.visible = true; // Default to visible for existing projects
+          }
+        });
+
         // Load base image from assets
         const baseImageFile =
           zipContent.files[`assets/${projectData.base.name}`];
@@ -272,6 +299,13 @@ export default function ImagePlacer() {
       reader.onload = async (e) => {
         try {
           const projectData = JSON.parse(e.target?.result as string) as Project;
+
+          // Add backward compatibility for mask visibility
+          projectData.layers.forEach((layer) => {
+            if (layer.mask && typeof layer.mask.visible === "undefined") {
+              layer.mask.visible = true; // Default to visible for existing projects
+            }
+          });
 
           setProject({
             ...projectData,
@@ -472,11 +506,12 @@ export default function ImagePlacer() {
                       setCanvasState((prev) => ({
                         ...prev,
                         selectedLayerId: layer.id,
+                        tool: "select", // Switch to transform mode when selecting a layer
                       }));
                       fabricCanvasRef.current?.selectLayer(layer.id);
                     }}
                   >
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center mb-2">
                       <div>
                         <div className="font-medium text-sm text-gray-900">
                           {layer.name}
@@ -514,6 +549,107 @@ export default function ImagePlacer() {
                         </button>
                       </div>
                     </div>
+
+                    {/* Mask Controls */}
+                    <div className="border-t pt-2 space-y-2">
+                      <div className="text-xs font-medium text-gray-800 mb-1">
+                        Mask
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <label className="flex items-center text-xs">
+                          <input
+                            type="checkbox"
+                            checked={layer.mask.enabled}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleLayerUpdate(layer.id, {
+                                mask: {
+                                  ...layer.mask,
+                                  enabled: e.target.checked,
+                                },
+                              });
+                            }}
+                            className="mr-1 w-3 h-3"
+                          />
+                          <span className="text-gray-700">Enable</span>
+                        </label>
+
+                        <label className="flex items-center text-xs">
+                          <input
+                            type="checkbox"
+                            checked={layer.mask.visible}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleLayerUpdate(layer.id, {
+                                mask: {
+                                  ...layer.mask,
+                                  visible: e.target.checked,
+                                },
+                              });
+                            }}
+                            className="mr-1 w-3 h-3"
+                          />
+                          <span className="text-gray-700">Show</span>
+                        </label>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCanvasState((prev) => ({
+                              ...prev,
+                              selectedLayerId: layer.id,
+                              tool: "mask",
+                            }));
+                          }}
+                          className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                        >
+                          Draw
+                        </button>
+                      </div>
+
+                      {layer.mask.path.length > 0 && (
+                        <div className="flex items-center justify-between text-xs text-gray-600">
+                          <span>{layer.mask.path.length} points</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleLayerUpdate(layer.id, {
+                                mask: { ...layer.mask, path: [] },
+                              });
+                            }}
+                            className="text-red-600 hover:text-red-700"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      )}
+
+                      {layer.mask.enabled && (
+                        <div className="space-y-1">
+                          <label className="block text-xs text-gray-700">
+                            Feather: {layer.mask.feather.toFixed(1)}px
+                          </label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="10"
+                            step="0.5"
+                            value={layer.mask.feather}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleLayerUpdate(layer.id, {
+                                mask: {
+                                  ...layer.mask,
+                                  feather: parseFloat(e.target.value),
+                                },
+                              });
+                            }}
+                            className="w-full h-1"
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -532,6 +668,21 @@ export default function ImagePlacer() {
               transformMode={canvasState.transformMode}
               canvasState={canvasState}
               onCanvasStateChange={setCanvasState}
+              onMaskFinished={() => {
+                // Switch back to transform mode when mask drawing is finished
+                setCanvasState((prev) => ({
+                  ...prev,
+                  tool: "select",
+                }));
+              }}
+              onLayerSelected={(layerId) => {
+                // When a layer is selected on canvas, update the layer selection and switch to transform mode
+                setCanvasState((prev) => ({
+                  ...prev,
+                  selectedLayerId: layerId,
+                  tool: "select",
+                }));
+              }}
             />
           ) : (
             <div className="text-center text-gray-500">

@@ -15,23 +15,24 @@ export interface QuadWarp {
 
 export interface Mask {
   enabled: boolean;
+  visible: boolean;
   path: [number, number][];
   feather: number;
 }
 
-export type BlendMode = 
-  | 'normal'
-  | 'multiply'
-  | 'screen' 
-  | 'overlay'
-  | 'soft-light'
-  | 'hard-light'
-  | 'color-dodge'
-  | 'color-burn'
-  | 'darken'
-  | 'lighten'
-  | 'difference'
-  | 'exclusion';
+export type BlendMode =
+  | "normal"
+  | "multiply"
+  | "screen"
+  | "overlay"
+  | "soft-light"
+  | "hard-light"
+  | "color-dodge"
+  | "color-burn"
+  | "darken"
+  | "lighten"
+  | "difference"
+  | "exclusion";
 
 export interface Layer {
   id: string;
@@ -70,13 +71,13 @@ export interface CanvasState {
   zoom: number;
   pan: { x: number; y: number };
   selectedLayerId?: string;
-  tool: 'select' | 'mask';
-  transformMode: 'normal' | 'skew';
+  tool: "select" | "mask";
+  transformMode: "normal" | "skew";
 }
 
 export interface ExportOptions {
   scale: number;
-  format: 'png' | 'jpeg';
+  format: "png" | "jpeg";
   quality: number;
   includeOriginalAssets: boolean;
 }

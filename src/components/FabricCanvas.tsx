@@ -20,12 +20,15 @@ interface FabricCanvasProps {
   onCanvasStateChange?: (
     state: CanvasState | ((prev: CanvasState) => CanvasState)
   ) => void;
+  onMaskFinished?: () => void;
+  onLayerSelected?: (layerId: string) => void;
 }
 
 export interface FabricCanvasRef {
   updateLayer: (layer: Layer) => void;
   removeLayer: (layerId: string) => void;
   selectLayer: (layerId: string) => void;
+  clearSelection: () => void;
   exportCanvas: (scale?: number) => Promise<string>;
   cancelMaskDrawing: () => void;
   finishMaskDrawing: () => void;
@@ -41,6 +44,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       transformMode = "normal",
       canvasState,
       onCanvasStateChange,
+      onMaskFinished,
+      onLayerSelected,
     },
     ref
   ) => {
@@ -73,6 +78,13 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       },
       selectLayer: (layerId: string) => {
         selectFabricLayer(layerId);
+      },
+      clearSelection: () => {
+        const canvas = fabricCanvasRef.current;
+        if (canvas) {
+          canvas.discardActiveObject();
+          canvas.renderAll();
+        }
       },
       exportCanvas: (scale = 1) => {
         return exportCanvasAsDataURL(scale);
@@ -122,6 +134,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         onLayerUpdate(maskDrawingRef.current.targetLayerId!, {
           mask: {
             enabled: true,
+            visible: true,
             path: normalizedPoints,
             feather: 2.0,
           },
@@ -145,6 +158,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         };
 
         canvas.renderAll();
+
+        // Notify parent that mask drawing is finished
+        if (onMaskFinished) {
+          onMaskFinished();
+        }
       },
       getMaskDrawingState: () => ({
         isDrawing: maskDrawingRef.current.isDrawing,
@@ -213,8 +231,20 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         const obj = e.selected?.[0];
         if (obj) {
           const layerId = objectLayerMapRef.current.get(obj);
-          if (layerId) {
-            // Could emit selection change event here
+          if (layerId && onLayerSelected) {
+            // Notify parent that a layer has been selected on canvas
+            onLayerSelected(layerId);
+          }
+        }
+      });
+
+      canvas.on("selection:updated", (e) => {
+        const obj = e.selected?.[0];
+        if (obj) {
+          const layerId = objectLayerMapRef.current.get(obj);
+          if (layerId && onLayerSelected) {
+            // Notify parent that a different layer has been selected on canvas
+            onLayerSelected(layerId);
           }
         }
       });
@@ -244,6 +274,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         onLayerUpdate(maskDrawingRef.current.targetLayerId!, {
           mask: {
             enabled: true,
+            visible: true,
             path: normalizedPoints,
             feather: 2.0,
           },
@@ -331,6 +362,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               opacity: layer.opacity,
               visible: layer.visible,
             });
+
+            // Also update mask visualization for this layer
+            updateFabricLayer(layer);
           }
         });
 
@@ -340,7 +374,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       project?.layers
         ?.map(
           (l) =>
-            `${l.id}-${l.transform.left}-${l.transform.top}-${l.transform.scaleX}-${l.transform.scaleY}-${l.transform.angle}-${l.opacity}-${l.visible}`
+            `${l.id}-${l.transform.left}-${l.transform.top}-${l.transform.scaleX}-${l.transform.scaleY}-${l.transform.angle}-${l.opacity}-${l.visible}-${l.mask.enabled}-${l.mask.visible}-${l.mask.path.length}-${l.mask.feather}`
         )
         .join(","),
     ]);
@@ -673,6 +707,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       onLayerUpdate(maskDrawingRef.current.targetLayerId!, {
         mask: {
           enabled: true,
+          visible: true,
           path: normalizedPoints,
           feather: 2.0,
         },
@@ -759,7 +794,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             maskDrawingRef.current.pointCircles.push(pointCircle);
             canvas.add(pointCircle);
 
-            // Create preview polygon (just a dot for now)
+            // Create preview polygon - start with just the first point
             const polygon = new Polygon([point], {
               fill: "rgba(255, 100, 100, 0.2)",
               stroke: "#ff6666",
@@ -794,15 +829,36 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             canvas.add(pointCircle);
 
             // Update preview polygon
-            if (
-              maskDrawingRef.current.currentPolygon &&
-              maskDrawingRef.current.points.length >= 3
-            ) {
-              maskDrawingRef.current.currentPolygon.set(
-                "points",
-                maskDrawingRef.current.points
-              );
+            if (maskDrawingRef.current.currentPolygon) {
+              // Update the polygon with all current points
+              if (maskDrawingRef.current.points.length >= 2) {
+                // Show line or polygon preview starting from 2 points
+                maskDrawingRef.current.currentPolygon.set({
+                  points: maskDrawingRef.current.points,
+                });
+              }
             }
+            canvas.renderAll();
+          }
+        }
+      };
+
+      const handleMouseMove = (e: any) => {
+        if (
+          canvasState?.tool === "mask" &&
+          maskDrawingRef.current.isDrawing &&
+          maskDrawingRef.current.points.length > 0
+        ) {
+          const pointer = canvas.getPointer(e.e);
+          const currentPoints = [
+            ...maskDrawingRef.current.points,
+            { x: pointer.x, y: pointer.y },
+          ];
+
+          if (maskDrawingRef.current.currentPolygon) {
+            maskDrawingRef.current.currentPolygon.set({
+              points: currentPoints,
+            });
             canvas.renderAll();
           }
         }
@@ -832,6 +888,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
       // Add event listeners
       canvas.on("mouse:down", handleMouseDown);
+      canvas.on("mouse:move", handleMouseMove);
       canvas.on("mouse:dblclick", handleDoubleClick);
       canvas.on("mouse:down", handleRightClick);
 
@@ -843,6 +900,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       // Cleanup
       return () => {
         canvas.off("mouse:down", handleMouseDown);
+        canvas.off("mouse:move", handleMouseMove);
         canvas.off("mouse:dblclick", handleDoubleClick);
         canvas.off("mouse:down", handleRightClick);
 
@@ -1000,8 +1058,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
         canvas.add(fabricImg);
 
-        // Add mask visualization if mask is enabled
-        if (layer.mask.enabled && layer.mask.path.length > 0) {
+        // Add mask visualization if mask is enabled and visible
+        if (
+          layer.mask.enabled &&
+          layer.mask.visible &&
+          layer.mask.path.length > 0
+        ) {
           const maskPoints = layer.mask.path.map((point) => ({
             x: point[0] * canvas.width,
             y: point[1] * canvas.height,
@@ -1058,7 +1120,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           (fabricObj as any)._maskPolygon = undefined;
         }
 
-        if (layer.mask.enabled && layer.mask.path.length > 0) {
+        if (
+          layer.mask.enabled &&
+          layer.mask.visible &&
+          layer.mask.path.length > 0
+        ) {
           const maskPoints = layer.mask.path.map((point) => ({
             x: point[0] * canvas.width,
             y: point[1] * canvas.height,
@@ -1110,6 +1176,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const canvas = fabricCanvasRef.current;
       if (!canvas) return;
 
+      // Clear current selection first
+      canvas.discardActiveObject();
+
       const objects = canvas.getObjects();
       const fabricObj = objects.find(
         (obj) => objectLayerMapRef.current.get(obj) === layerId
@@ -1117,8 +1186,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
       if (fabricObj) {
         canvas.setActiveObject(fabricObj);
-        canvas.renderAll();
+        console.log(`Selected fabric object for layer: ${layerId}`);
+      } else {
+        console.log(`No fabric object found for layer: ${layerId}`);
       }
+
+      canvas.renderAll();
     };
 
     const exportCanvasAsDataURL = async (
