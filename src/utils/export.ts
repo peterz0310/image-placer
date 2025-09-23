@@ -1,10 +1,10 @@
-import JSZip from 'jszip';
-import { Project } from '@/types';
+import JSZip from "jszip";
+import { Project } from "@/types";
 
 export interface ExportOptions {
   includeOriginalAssets: boolean;
   renderScale: number;
-  format: 'png' | 'jpeg';
+  format: "png" | "jpeg";
   quality: number;
 }
 
@@ -12,33 +12,33 @@ export class ProjectExporter {
   static async exportJSON(project: Project): Promise<Blob> {
     const exportData = this.prepareProjectForExport(project);
     return new Blob([JSON.stringify(exportData, null, 2)], {
-      type: 'application/json'
+      type: "application/json",
     });
   }
 
   static async exportZIP(
-    project: Project, 
+    project: Project,
     compositeBlob: Blob,
     options: ExportOptions = {
       includeOriginalAssets: true,
       renderScale: 1,
-      format: 'png',
-      quality: 1.0
+      format: "png",
+      quality: 1.0,
     }
   ): Promise<Blob> {
     const zip = new JSZip();
 
     // Add project JSON
     const projectData = this.prepareProjectForExport(project);
-    zip.file('project.json', JSON.stringify(projectData, null, 2));
+    zip.file("project.json", JSON.stringify(projectData, null, 2));
 
     // Add composite render
     zip.file(`composite.${options.format}`, compositeBlob);
 
     if (options.includeOriginalAssets) {
       // Create assets folder
-      const assetsFolder = zip.folder('assets');
-      
+      const assetsFolder = zip.folder("assets");
+
       // Add base image
       if (project.base.originalFile) {
         assetsFolder!.file(project.base.name, project.base.originalFile);
@@ -58,7 +58,7 @@ export class ProjectExporter {
       }
     }
 
-    return await zip.generateAsync({ type: 'blob' });
+    return await zip.generateAsync({ type: "blob" });
   }
 
   private static prepareProjectForExport(project: Project): Project {
@@ -67,33 +67,33 @@ export class ProjectExporter {
       base: {
         ...project.base,
         imageData: undefined,
-        originalFile: undefined
+        originalFile: undefined,
       },
-      layers: project.layers.map(layer => ({
+      layers: project.layers.map((layer) => ({
         ...layer,
         imageData: undefined,
-        originalFile: undefined
-      }))
+        originalFile: undefined,
+      })),
     };
   }
 
   private static dataURLToBlob(dataURL: string): Blob {
-    const arr = dataURL.split(',');
+    const arr = dataURL.split(",");
     const mime = arr[0].match(/:(.*?);/)![1];
     const bstr = atob(arr[1]);
     let n = bstr.length;
     const u8arr = new Uint8Array(n);
-    
+
     while (n--) {
       u8arr[n] = bstr.charCodeAt(n);
     }
-    
+
     return new Blob([u8arr], { type: mime });
   }
 
   static downloadBlob(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
@@ -103,14 +103,27 @@ export class ProjectExporter {
   }
 }
 
-export async function renderComposite(project: Project, scale: number = 1): Promise<Blob> {
+export async function renderComposite(
+  project: Project,
+  scale: number = 1
+): Promise<Blob> {
   return new Promise(async (resolve, reject) => {
     try {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d')!;
-      
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d")!;
+
       canvas.width = project.base.width * scale;
       canvas.height = project.base.height * scale;
+
+      // Calculate the display scale factor used in FabricCanvas
+      // This is needed to correctly interpret the stored transform values
+      const maxDisplayWidth = 800;
+      const maxDisplayHeight = 600;
+      const displayScale = Math.min(
+        maxDisplayWidth / project.base.width,
+        maxDisplayHeight / project.base.height,
+        1
+      );
 
       // Load and draw base image
       if (project.base.imageData) {
@@ -121,32 +134,39 @@ export async function renderComposite(project: Project, scale: number = 1): Prom
       // Draw layers
       for (const layer of project.layers) {
         if (!layer.visible || !layer.imageData) continue;
-        
+
         const img = await loadImage(layer.imageData);
-        
+
         ctx.save();
         ctx.globalAlpha = layer.opacity;
-        ctx.globalCompositeOperation = layer.blendMode as GlobalCompositeOperation;
+        ctx.globalCompositeOperation =
+          layer.blendMode as GlobalCompositeOperation;
 
         const centerX = layer.transform.left * canvas.width;
         const centerY = layer.transform.top * canvas.height;
-        
+
         ctx.translate(centerX, centerY);
         ctx.rotate((layer.transform.angle * Math.PI) / 180);
-        
+
         if (layer.transform.skewX || layer.transform.skewY) {
           ctx.transform(
             1,
-            Math.tan((layer.transform.skewY || 0) * Math.PI / 180),
-            Math.tan((layer.transform.skewX || 0) * Math.PI / 180),
+            Math.tan(((layer.transform.skewY || 0) * Math.PI) / 180),
+            Math.tan(((layer.transform.skewX || 0) * Math.PI) / 180),
             1,
             0,
             0
           );
         }
 
-        const scaledWidth = img.width * layer.transform.scaleX * scale;
-        const scaledHeight = img.height * layer.transform.scaleY * scale;
+        // The stored transform.scaleX/Y values are from FabricJS on the display-scaled canvas
+        // To render at export resolution, we need to scale them appropriately
+        // If displayScale is 0.4 and exportScale is 1.0, we need to scale up by 2.5x
+        const scaleAdjustment = scale / displayScale;
+        const scaledWidth =
+          img.width * layer.transform.scaleX * scaleAdjustment;
+        const scaledHeight =
+          img.height * layer.transform.scaleY * scaleAdjustment;
 
         ctx.drawImage(
           img,
@@ -163,9 +183,9 @@ export async function renderComposite(project: Project, scale: number = 1): Prom
         if (blob) {
           resolve(blob);
         } else {
-          reject(new Error('Failed to create composite blob'));
+          reject(new Error("Failed to create composite blob"));
         }
-      }, 'image/png');
+      }, "image/png");
     } catch (error) {
       reject(error);
     }
@@ -174,9 +194,42 @@ export async function renderComposite(project: Project, scale: number = 1): Prom
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
+    // Validate data URL format
+    if (!src || typeof src !== "string") {
+      console.error("Export: Invalid image src:", src);
+      reject(new Error("Invalid image src: not a string"));
+      return;
+    }
+
+    if (!src.startsWith("data:image/")) {
+      console.error(
+        "Export: Invalid data URL format:",
+        src.substring(0, 50) + "..."
+      );
+      reject(new Error("Invalid data URL: not an image data URL"));
+      return;
+    }
+
     const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
+
+    img.onload = () => {
+      console.log("Export: Image loaded successfully:", {
+        width: img.width,
+        height: img.height,
+        src: src.substring(0, 50) + "...",
+      });
+      resolve(img);
+    };
+
+    img.onerror = (error) => {
+      console.error("Export: Failed to load image from data URL:", {
+        error,
+        dataURLStart: src.substring(0, 100) + "...",
+        dataURLLength: src.length,
+      });
+      reject(error);
+    };
+
     img.src = src;
   });
 }

@@ -1,4 +1,4 @@
-import { Project, Layer } from '@/types';
+import { Project, Layer } from "@/types";
 
 export class CanvasRenderer {
   private canvas: HTMLCanvasElement;
@@ -7,7 +7,7 @@ export class CanvasRenderer {
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d')!;
+    this.ctx = canvas.getContext("2d")!;
   }
 
   async loadImage(src: string): Promise<HTMLImageElement> {
@@ -28,17 +28,17 @@ export class CanvasRenderer {
 
   async render(project: Project) {
     const { base, layers } = project;
-    
+
     // Set canvas size based on base image
     const maxDisplayWidth = 800;
     const maxDisplayHeight = 600;
-    
+
     const scale = Math.min(
       maxDisplayWidth / base.width,
       maxDisplayHeight / base.height,
       1
     );
-    
+
     this.canvas.width = base.width * scale;
     this.canvas.height = base.height * scale;
 
@@ -49,17 +49,23 @@ export class CanvasRenderer {
       // Draw base image
       if (base.imageData) {
         const baseImg = await this.loadImage(base.imageData);
-        this.ctx.drawImage(baseImg, 0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.drawImage(
+          baseImg,
+          0,
+          0,
+          this.canvas.width,
+          this.canvas.height
+        );
       }
 
       // Draw layers
       for (const layer of layers) {
         if (!layer.visible || !layer.imageData) continue;
-        
+
         await this.drawLayer(layer, scale);
       }
     } catch (error) {
-      console.error('Error rendering canvas:', error);
+      console.error("Error rendering canvas:", error);
     }
   }
 
@@ -76,19 +82,19 @@ export class CanvasRenderer {
     // Calculate position and size
     const centerX = transform.left * this.canvas.width;
     const centerY = transform.top * this.canvas.height;
-    
+
     // Translate to center point
     this.ctx.translate(centerX, centerY);
-    
+
     // Apply rotation
     this.ctx.rotate((transform.angle * Math.PI) / 180);
-    
+
     // Apply skew if present
     if (transform.skewX || transform.skewY) {
       this.ctx.transform(
         1,
-        Math.tan((transform.skewY || 0) * Math.PI / 180),
-        Math.tan((transform.skewX || 0) * Math.PI / 180),
+        Math.tan(((transform.skewY || 0) * Math.PI) / 180),
+        Math.tan(((transform.skewX || 0) * Math.PI) / 180),
         1,
         0,
         0
@@ -115,46 +121,54 @@ export class CanvasRenderer {
     return new Promise(async (resolve, reject) => {
       try {
         // Create a temporary canvas for export
-        const exportCanvas = document.createElement('canvas');
-        const exportCtx = exportCanvas.getContext('2d')!;
-        
+        const exportCanvas = document.createElement("canvas");
+        const exportCtx = exportCanvas.getContext("2d")!;
+
         exportCanvas.width = project.base.width * exportScale;
         exportCanvas.height = project.base.height * exportScale;
 
         // Draw base image
         if (project.base.imageData) {
           const baseImg = await this.loadImage(project.base.imageData);
-          exportCtx.drawImage(baseImg, 0, 0, exportCanvas.width, exportCanvas.height);
+          exportCtx.drawImage(
+            baseImg,
+            0,
+            0,
+            exportCanvas.width,
+            exportCanvas.height
+          );
         }
 
         // Draw layers
         for (const layer of project.layers) {
           if (!layer.visible || !layer.imageData) continue;
-          
+
           const img = await this.loadImage(layer.imageData);
           const { transform, opacity, blendMode } = layer;
 
           exportCtx.save();
           exportCtx.globalAlpha = opacity;
-          exportCtx.globalCompositeOperation = blendMode as GlobalCompositeOperation;
+          exportCtx.globalCompositeOperation =
+            blendMode as GlobalCompositeOperation;
 
           const centerX = transform.left * exportCanvas.width;
           const centerY = transform.top * exportCanvas.height;
-          
+
           exportCtx.translate(centerX, centerY);
           exportCtx.rotate((transform.angle * Math.PI) / 180);
-          
+
           if (transform.skewX || transform.skewY) {
             exportCtx.transform(
               1,
-              Math.tan((transform.skewY || 0) * Math.PI / 180),
-              Math.tan((transform.skewX || 0) * Math.PI / 180),
+              Math.tan(((transform.skewY || 0) * Math.PI) / 180),
+              Math.tan(((transform.skewX || 0) * Math.PI) / 180),
               1,
               0,
               0
             );
           }
 
+          // Apply the same scaling logic as the display renderer
           const scaledWidth = img.width * transform.scaleX * exportScale;
           const scaledHeight = img.height * transform.scaleY * exportScale;
 
@@ -173,9 +187,9 @@ export class CanvasRenderer {
           if (blob) {
             resolve(blob);
           } else {
-            reject(new Error('Failed to create blob'));
+            reject(new Error("Failed to create blob"));
           }
-        }, 'image/png');
+        }, "image/png");
       } catch (error) {
         reject(error);
       }

@@ -577,9 +577,42 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       dataURL: string
     ): Promise<HTMLImageElement> => {
       return new Promise((resolve, reject) => {
+        // Validate data URL format
+        if (!dataURL || typeof dataURL !== "string") {
+          console.error("Invalid data URL:", dataURL);
+          reject(new Error("Invalid data URL: not a string"));
+          return;
+        }
+
+        if (!dataURL.startsWith("data:image/")) {
+          console.error(
+            "Invalid data URL format:",
+            dataURL.substring(0, 50) + "..."
+          );
+          reject(new Error("Invalid data URL: not an image data URL"));
+          return;
+        }
+
         const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = reject;
+
+        img.onload = () => {
+          console.log("Image loaded successfully:", {
+            width: img.width,
+            height: img.height,
+            src: dataURL.substring(0, 50) + "...",
+          });
+          resolve(img);
+        };
+
+        img.onerror = (error) => {
+          console.error("Failed to load image from data URL:", {
+            error,
+            dataURLStart: dataURL.substring(0, 100) + "...",
+            dataURLLength: dataURL.length,
+          });
+          reject(error);
+        };
+
         img.src = dataURL;
       });
     };
