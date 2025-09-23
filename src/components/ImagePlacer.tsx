@@ -730,15 +730,30 @@ export default function ImagePlacer() {
 
               {/* Base Image Info */}
               <div className="mb-4 p-3 bg-white rounded border">
-                <div className="font-medium text-sm text-gray-800 flex items-center gap-2">
-                  <Square size={16} className="text-blue-600" />
-                  Base Image
-                </div>
-                <div className="text-sm text-gray-900 ml-6">
-                  {project.base.name}
-                </div>
-                <div className="text-xs text-gray-700 ml-6">
-                  {project.base.width} × {project.base.height}
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded border bg-gray-100 flex-shrink-0 overflow-hidden">
+                    {project.base.imageData ? (
+                      <img
+                        src={project.base.imageData}
+                        alt={project.base.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <Square size={16} className="text-gray-400 m-auto" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium text-sm text-gray-800 flex items-center gap-2">
+                      <Square size={16} className="text-blue-600" />
+                      Base Image
+                    </div>
+                    <div className="text-sm text-gray-900">
+                      {project.base.name}
+                    </div>
+                    <div className="text-xs text-gray-700">
+                      {project.base.width} × {project.base.height}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1281,7 +1296,7 @@ export default function ImagePlacer() {
                   </div>
                   <p className="text-xs text-gray-600 mt-1">
                     {canvasState.transformMode === "skew"
-                      ? "Drag corners to skew the selected layer"
+                      ? "Drag sides to skew the selected layer"
                       : "Drag corners to scale, center to move, rotation handle to rotate"}
                   </p>
                 </div>

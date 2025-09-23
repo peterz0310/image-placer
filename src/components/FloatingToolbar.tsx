@@ -2,11 +2,11 @@
 
 import {
   MousePointer2,
-  Maximize,
-  Circle,
+  Move3D,
   Scissors,
   Undo2,
   Redo2,
+  Scan,
 } from "lucide-react";
 
 interface FloatingToolbarProps {
@@ -110,7 +110,7 @@ export default function FloatingToolbar({
           }`}
           title="Transform Mode"
         >
-          <Circle size={16} />
+          <Move3D size={16} />
           Transform
         </button>
         <button
@@ -122,7 +122,7 @@ export default function FloatingToolbar({
           }`}
           title="Skew Mode"
         >
-          <Maximize size={16} />
+          <Scan size={16} />
           Skew
         </button>
       </div>
