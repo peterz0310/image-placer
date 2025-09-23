@@ -73,6 +73,269 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       layerCount: number;
     }>({ baseImageData: undefined, layerCount: 0 });
 
+    // Helper function to apply transform mode settings to a fabric object
+    const applyTransformModeToObject = (obj: FabricObject, layer: Layer) => {
+      const isLocked = layer?.locked || false;
+
+      if (isLocked) {
+        // Layer is locked - skip transform mode changes and ensure it stays locked
+        obj.selectable = false;
+        obj.evented = false;
+        obj.lockMovementX = true;
+        obj.lockMovementY = true;
+        obj.lockRotation = true;
+        obj.lockScalingX = true;
+        obj.lockScalingY = true;
+        obj.lockSkewingX = true;
+        obj.lockSkewingY = true;
+
+        obj.setControlsVisibility({
+          tl: false,
+          tr: false,
+          br: false,
+          bl: false,
+          ml: false,
+          mt: false,
+          mr: false,
+          mb: false,
+          mtr: false,
+        });
+
+        obj.borderColor = "#999999";
+        obj.cornerColor = "#999999";
+        obj.cornerSize = 0;
+      } else if (transformMode === "skew") {
+        // Enable skewing mode
+        obj.lockSkewingX = false;
+        obj.lockSkewingY = false;
+        obj.lockRotation = true;
+        obj.lockScalingX = false; // Keep unlocked so handles work
+        obj.lockScalingY = false; // Keep unlocked so handles work
+        obj.lockMovementX = false;
+        obj.lockMovementY = false;
+
+        // Show only side controls for skewing
+        obj.setControlsVisibility({
+          tl: false,
+          tr: false,
+          br: false,
+          bl: false,
+          ml: true, // middle-left
+          mt: true, // middle-top
+          mr: true, // middle-right
+          mb: true, // middle-bottom
+          mtr: false,
+        });
+
+        // Only override handlers if not already overridden
+        if (!(obj as any)._skewHandlersApplied) {
+          // Override control handlers to modify skew instead of scale
+          const originalML = obj.controls.ml.actionHandler;
+          const originalMR = obj.controls.mr.actionHandler;
+          const originalMT = obj.controls.mt.actionHandler;
+          const originalMB = obj.controls.mb.actionHandler;
+
+          // Store original handlers so we can restore them
+          (obj as any)._originalHandlers = {
+            originalML,
+            originalMR,
+            originalMT,
+            originalMB,
+          };
+
+          // Custom skew handlers
+          obj.controls.ml.actionHandler = (
+            eventData: any,
+            transformData: any,
+            x: number,
+            y: number
+          ) => {
+            const target = transformData.target;
+            const canvas = target.canvas;
+            if (!canvas) return false;
+
+            const pointer = canvas.getPointer(eventData);
+            const startSkewY =
+              (target as any)._skewStartY !== undefined
+                ? (target as any)._skewStartY
+                : target.skewY || 0;
+
+            if ((target as any)._skewStartY === undefined) {
+              (target as any)._skewStartY = target.skewY || 0;
+              (target as any)._skewStartPointer = pointer.y;
+            }
+
+            const deltaY =
+              (pointer.y - (target as any)._skewStartPointer) * 0.2;
+            const newSkewY = Math.max(-45, Math.min(45, startSkewY + deltaY));
+            target.set("skewY", newSkewY);
+            canvas.renderAll();
+
+            return true;
+          };
+
+          obj.controls.mr.actionHandler = (
+            eventData: any,
+            transformData: any,
+            x: number,
+            y: number
+          ) => {
+            const target = transformData.target;
+            const canvas = target.canvas;
+            if (!canvas) return false;
+
+            const pointer = canvas.getPointer(eventData);
+            const startSkewY =
+              (target as any)._skewStartY !== undefined
+                ? (target as any)._skewStartY
+                : target.skewY || 0;
+
+            if ((target as any)._skewStartY === undefined) {
+              (target as any)._skewStartY = target.skewY || 0;
+              (target as any)._skewStartPointer = pointer.y;
+            }
+
+            const deltaY =
+              (pointer.y - (target as any)._skewStartPointer) * -0.2;
+            const newSkewY = Math.max(-45, Math.min(45, startSkewY + deltaY));
+            target.set("skewY", newSkewY);
+            canvas.renderAll();
+
+            return true;
+          };
+
+          obj.controls.mt.actionHandler = (
+            eventData: any,
+            transformData: any,
+            x: number,
+            y: number
+          ) => {
+            const target = transformData.target;
+            const canvas = target.canvas;
+            if (!canvas) return false;
+
+            const pointer = canvas.getPointer(eventData);
+            const startSkewX =
+              (target as any)._skewStartX !== undefined
+                ? (target as any)._skewStartX
+                : target.skewX || 0;
+
+            if ((target as any)._skewStartX === undefined) {
+              (target as any)._skewStartX = target.skewX || 0;
+              (target as any)._skewStartPointer = pointer.x;
+            }
+
+            const deltaX =
+              (pointer.x - (target as any)._skewStartPointer) * 0.2;
+            const newSkewX = Math.max(-45, Math.min(45, startSkewX + deltaX));
+            target.set("skewX", newSkewX);
+            canvas.renderAll();
+
+            return true;
+          };
+
+          obj.controls.mb.actionHandler = (
+            eventData: any,
+            transformData: any,
+            x: number,
+            y: number
+          ) => {
+            const target = transformData.target;
+            const canvas = target.canvas;
+            if (!canvas) return false;
+
+            const pointer = canvas.getPointer(eventData);
+            const startSkewX =
+              (target as any)._skewStartX !== undefined
+                ? (target as any)._skewStartX
+                : target.skewX || 0;
+
+            if ((target as any)._skewStartX === undefined) {
+              (target as any)._skewStartX = target.skewX || 0;
+              (target as any)._skewStartPointer = pointer.x;
+            }
+
+            const deltaX =
+              (pointer.x - (target as any)._skewStartPointer) * -0.2;
+            const newSkewX = Math.max(-45, Math.min(45, startSkewX + deltaX));
+            target.set("skewX", newSkewX);
+            canvas.renderAll();
+
+            return true;
+          };
+
+          // Reset skew start values on mouse up
+          const resetSkewStart = () => {
+            delete (obj as any)._skewStartX;
+            delete (obj as any)._skewStartY;
+            delete (obj as any)._skewStartPointer;
+          };
+
+          // Remove any existing listeners first to avoid duplicates
+          obj.off("mouseup", resetSkewStart);
+          obj.off("modified", resetSkewStart);
+
+          obj.on("mouseup", resetSkewStart);
+          obj.on("modified", resetSkewStart);
+
+          (obj as any)._skewHandlersApplied = true;
+        }
+
+        // Set visual indicators for skew mode
+        obj.borderColor = "#ff6600";
+        obj.cornerColor = "#ff6600";
+        obj.cornerSize = 10;
+        obj.transparentCorners = false;
+      } else {
+        // Normal transform mode - disable skewing, enable scaling and rotation
+        obj.lockSkewingX = true;
+        obj.lockSkewingY = true;
+        obj.lockRotation = false;
+        obj.lockScalingX = false;
+        obj.lockScalingY = false;
+        obj.lockMovementX = false;
+        obj.lockMovementY = false;
+
+        // Show all controls in normal mode
+        obj.setControlsVisibility({
+          tl: true, // top-left corner
+          tr: true, // top-right corner
+          br: true, // bottom-right corner
+          bl: true, // bottom-left corner
+          ml: true, // middle-left
+          mt: true, // middle-top
+          mr: true, // middle-right
+          mb: true, // middle-bottom
+          mtr: true, // rotation control
+        });
+
+        // Restore original handlers if they exist
+        const originalHandlers = (obj as any)._originalHandlers;
+        if (originalHandlers) {
+          obj.controls.ml.actionHandler = originalHandlers.originalML;
+          obj.controls.mr.actionHandler = originalHandlers.originalMR;
+          obj.controls.mt.actionHandler = originalHandlers.originalMT;
+          obj.controls.mb.actionHandler = originalHandlers.originalMB;
+          delete (obj as any)._originalHandlers;
+          delete (obj as any)._skewHandlersApplied;
+        }
+
+        // Clean up any skew tracking properties
+        delete (obj as any)._skewStartX;
+        delete (obj as any)._skewStartY;
+        delete (obj as any)._skewStartPointer;
+
+        // Set visual indicators for normal mode
+        obj.borderColor = "#0066cc";
+        obj.cornerColor = "#0066cc";
+        obj.cornerSize = 8;
+        obj.transparentCorners = false;
+      }
+
+      // Force controls update
+      obj.setCoords();
+    };
+
     useImperativeHandle(ref, () => ({
       updateLayer: (layer: Layer) => {
         updateFabricLayer(layer);
@@ -300,6 +563,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               lockSkewingY: layer.locked,
             });
 
+            // Reapply transform mode settings after layer update
+            applyTransformModeToObject(fabricObj, layer);
+
             // Also update mask visualization for this layer
             updateFabricLayer(layer);
           }
@@ -319,259 +585,10 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       objects.forEach((obj, index) => {
         const layerId = objectLayerMapRef.current.get(obj);
         const layer = project?.layers.find((l) => l.id === layerId);
-        const isLocked = layer?.locked || false;
 
-        if (isLocked) {
-          // Layer is locked - skip transform mode changes and ensure it stays locked
-          obj.selectable = false;
-          obj.evented = false;
-          obj.lockMovementX = true;
-          obj.lockMovementY = true;
-          obj.lockRotation = true;
-          obj.lockScalingX = true;
-          obj.lockScalingY = true;
-          obj.lockSkewingX = true;
-          obj.lockSkewingY = true;
-
-          obj.setControlsVisibility({
-            tl: false,
-            tr: false,
-            br: false,
-            bl: false,
-            ml: false,
-            mt: false,
-            mr: false,
-            mb: false,
-            mtr: false,
-          });
-
-          obj.borderColor = "#999999";
-          obj.cornerColor = "#999999";
-          obj.cornerSize = 0;
-        } else if (transformMode === "skew") {
-          // Enable skewing mode
-          obj.lockSkewingX = false;
-          obj.lockSkewingY = false;
-          obj.lockRotation = true;
-          obj.lockScalingX = false; // Keep unlocked so handles work
-          obj.lockScalingY = false; // Keep unlocked so handles work
-          obj.lockMovementX = false;
-          obj.lockMovementY = false;
-
-          // Show only side controls for skewing
-          obj.setControlsVisibility({
-            tl: false,
-            tr: false,
-            br: false,
-            bl: false,
-            ml: true, // middle-left
-            mt: true, // middle-top
-            mr: true, // middle-right
-            mb: true, // middle-bottom
-            mtr: false,
-          });
-
-          // Override control handlers to modify skew instead of scale
-          const originalML = obj.controls.ml.actionHandler;
-          const originalMR = obj.controls.mr.actionHandler;
-          const originalMT = obj.controls.mt.actionHandler;
-          const originalMB = obj.controls.mb.actionHandler;
-
-          // Store original handlers so we can restore them
-          (obj as any)._originalHandlers = {
-            originalML,
-            originalMR,
-            originalMT,
-            originalMB,
-          };
-
-          // Custom skew handlers
-          obj.controls.ml.actionHandler = (
-            eventData: any,
-            transformData: any,
-            x: number,
-            y: number
-          ) => {
-            const target = transformData.target;
-            const canvas = target.canvas;
-            if (!canvas) return false;
-
-            const pointer = canvas.getPointer(eventData);
-            const startSkewY =
-              (target as any)._skewStartY !== undefined
-                ? (target as any)._skewStartY
-                : target.skewY || 0;
-
-            if ((target as any)._skewStartY === undefined) {
-              (target as any)._skewStartY = target.skewY || 0;
-              (target as any)._skewStartPointer = pointer.y;
-            }
-
-            const deltaY =
-              (pointer.y - (target as any)._skewStartPointer) * 0.2;
-            const newSkewY = Math.max(-45, Math.min(45, startSkewY + deltaY));
-            target.set("skewY", newSkewY);
-            canvas.renderAll();
-
-            return true;
-          };
-
-          obj.controls.mr.actionHandler = (
-            eventData: any,
-            transformData: any,
-            x: number,
-            y: number
-          ) => {
-            const target = transformData.target;
-            const canvas = target.canvas;
-            if (!canvas) return false;
-
-            const pointer = canvas.getPointer(eventData);
-            const startSkewY =
-              (target as any)._skewStartY !== undefined
-                ? (target as any)._skewStartY
-                : target.skewY || 0;
-
-            if ((target as any)._skewStartY === undefined) {
-              (target as any)._skewStartY = target.skewY || 0;
-              (target as any)._skewStartPointer = pointer.y;
-            }
-
-            const deltaY =
-              (pointer.y - (target as any)._skewStartPointer) * -0.2;
-            const newSkewY = Math.max(-45, Math.min(45, startSkewY + deltaY));
-            target.set("skewY", newSkewY);
-            canvas.renderAll();
-
-            return true;
-          };
-
-          obj.controls.mt.actionHandler = (
-            eventData: any,
-            transformData: any,
-            x: number,
-            y: number
-          ) => {
-            const target = transformData.target;
-            const canvas = target.canvas;
-            if (!canvas) return false;
-
-            const pointer = canvas.getPointer(eventData);
-            const startSkewX =
-              (target as any)._skewStartX !== undefined
-                ? (target as any)._skewStartX
-                : target.skewX || 0;
-
-            if ((target as any)._skewStartX === undefined) {
-              (target as any)._skewStartX = target.skewX || 0;
-              (target as any)._skewStartPointer = pointer.x;
-            }
-
-            const deltaX =
-              (pointer.x - (target as any)._skewStartPointer) * 0.2;
-            const newSkewX = Math.max(-45, Math.min(45, startSkewX + deltaX));
-            target.set("skewX", newSkewX);
-            canvas.renderAll();
-
-            return true;
-          };
-
-          obj.controls.mb.actionHandler = (
-            eventData: any,
-            transformData: any,
-            x: number,
-            y: number
-          ) => {
-            const target = transformData.target;
-            const canvas = target.canvas;
-            if (!canvas) return false;
-
-            const pointer = canvas.getPointer(eventData);
-            const startSkewX =
-              (target as any)._skewStartX !== undefined
-                ? (target as any)._skewStartX
-                : target.skewX || 0;
-
-            if ((target as any)._skewStartX === undefined) {
-              (target as any)._skewStartX = target.skewX || 0;
-              (target as any)._skewStartPointer = pointer.x;
-            }
-
-            const deltaX =
-              (pointer.x - (target as any)._skewStartPointer) * -0.2;
-            const newSkewX = Math.max(-45, Math.min(45, startSkewX + deltaX));
-            target.set("skewX", newSkewX);
-            canvas.renderAll();
-
-            return true;
-          };
-
-          // Reset skew start values on mouse up
-          const resetSkewStart = () => {
-            delete (obj as any)._skewStartX;
-            delete (obj as any)._skewStartY;
-            delete (obj as any)._skewStartPointer;
-          };
-
-          obj.on("mouseup", resetSkewStart);
-          obj.on("modified", resetSkewStart);
-
-          // Set visual indicators for skew mode
-          obj.borderColor = "#ff6600";
-          obj.cornerColor = "#ff6600";
-          obj.cornerSize = 10;
-          obj.transparentCorners = false;
-
-          console.log(
-            `Enabled REAL skewing on object ${index} - dragging handles will modify skewX/skewY`
-          );
-        } else {
-          // Normal transform mode - disable skewing, enable scaling and rotation
-          obj.lockSkewingX = true;
-          obj.lockSkewingY = true;
-          obj.lockRotation = false;
-          obj.lockScalingX = false;
-          obj.lockScalingY = false;
-          obj.lockMovementX = false;
-          obj.lockMovementY = false;
-
-          // Show all controls in normal mode
-          obj.setControlsVisibility({
-            tl: true, // top-left corner
-            tr: true, // top-right corner
-            br: true, // bottom-right corner
-            bl: true, // bottom-left corner
-            ml: true, // middle-left
-            mt: true, // middle-top
-            mr: true, // middle-right
-            mb: true, // middle-bottom
-            mtr: true, // rotation control
-          });
-
-          // Restore original handlers if they exist
-          const originalHandlers = (obj as any)._originalHandlers;
-          if (originalHandlers) {
-            obj.controls.ml.actionHandler = originalHandlers.originalML;
-            obj.controls.mr.actionHandler = originalHandlers.originalMR;
-            obj.controls.mt.actionHandler = originalHandlers.originalMT;
-            obj.controls.mb.actionHandler = originalHandlers.originalMB;
-            delete (obj as any)._originalHandlers;
-          }
-
-          // Clean up any skew tracking properties
-          delete (obj as any)._skewStartX;
-          delete (obj as any)._skewStartY;
-          delete (obj as any)._skewStartPointer;
-
-          // Set visual indicators for normal mode
-          obj.borderColor = "#0066cc";
-          obj.cornerColor = "#0066cc";
-          obj.cornerSize = 8;
-          obj.transparentCorners = false;
-
-          console.log(`Disabled skewing on object ${index}`);
-        } // Force controls update
-        obj.setCoords();
+        if (layer) {
+          applyTransformModeToObject(obj, layer);
+        }
       });
 
       canvas.renderAll();
@@ -1003,82 +1020,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           lockSkewingY: layer.locked,
         });
 
-        // Apply transform mode settings immediately, but respect layer locking
-        if (!layer.locked) {
-          if (transformMode === "skew") {
-            fabricImg.lockSkewingX = false;
-            fabricImg.lockSkewingY = false;
-            fabricImg.lockRotation = true;
-            fabricImg.lockScalingX = false; // Keep scaling unlocked but hide corner controls
-            fabricImg.lockScalingY = false; // Keep scaling unlocked but hide corner controls
-            fabricImg.lockMovementX = false;
-            fabricImg.lockMovementY = false;
-
-            // Hide corner controls, show only side controls for skewing
-            fabricImg.setControlsVisibility({
-              tl: false, // top-left corner
-              tr: false, // top-right corner
-              br: false, // bottom-right corner
-              bl: false, // bottom-left corner
-              ml: true, // middle-left (for skewY)
-              mt: true, // middle-top (for skewX)
-              mr: true, // middle-right (for skewY)
-              mb: true, // middle-bottom (for skewX)
-              mtr: false, // rotation control
-            });
-
-            fabricImg.borderColor = "#ff6600";
-            fabricImg.cornerColor = "#ff6600";
-            fabricImg.cornerSize = 10;
-          } else {
-            fabricImg.lockSkewingX = true;
-            fabricImg.lockSkewingY = true;
-            fabricImg.lockRotation = false;
-            fabricImg.lockScalingX = false;
-            fabricImg.lockScalingY = false;
-            fabricImg.lockMovementX = false;
-            fabricImg.lockMovementY = false;
-
-            // Show all controls in normal mode
-            fabricImg.setControlsVisibility({
-              tl: true, // top-left corner
-              tr: true, // top-right corner
-              br: true, // bottom-right corner
-              bl: true, // bottom-left corner
-              ml: true, // middle-left
-              mt: true, // middle-top
-              mr: true, // middle-right
-              mb: true, // middle-bottom
-              mtr: true, // rotation control
-            });
-
-            fabricImg.borderColor = "#0066cc";
-            fabricImg.cornerColor = "#0066cc";
-            fabricImg.cornerSize = 8;
-          }
-        } else {
-          // Layer is locked - hide all controls and show locked visual style
-          fabricImg.setControlsVisibility({
-            tl: false,
-            tr: false,
-            br: false,
-            bl: false,
-            ml: false,
-            mt: false,
-            mr: false,
-            mb: false,
-            mtr: false,
-          });
-
-          fabricImg.borderColor = "#999999";
-          fabricImg.cornerColor = "#999999";
-          fabricImg.cornerSize = 0;
-        }
-
-        fabricImg.transparentCorners = false;
-
         // Store layer ID mapping
         objectLayerMapRef.current.set(fabricImg, layer.id);
+
+        // Apply transform mode settings immediately using helper function
+        applyTransformModeToObject(fabricImg, layer);
 
         canvas.add(fabricImg);
 
