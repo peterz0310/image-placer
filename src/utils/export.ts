@@ -9,6 +9,10 @@ export interface ExportOptions {
   quality: number;
 }
 
+/**
+ * Utility class for exporting and importing Image Placer projects
+ * Handles ZIP packaging with assets and JSON project data
+ */
 export class ProjectExporter {
   static async exportJSON(project: Project): Promise<Blob> {
     const exportData = this.prepareProjectForExport(project);
@@ -132,6 +136,12 @@ export class ProjectExporter {
   }
 }
 
+/**
+ * Renders a composite image from the project data
+ * @param project - Project data with layers and transforms
+ * @param scale - Scale factor for export resolution (1.0 = base resolution)
+ * @returns Promise resolving to a Blob containing the composite PNG
+ */
 export async function renderComposite(
   project: Project,
   scale: number = 1
@@ -255,20 +265,20 @@ export async function renderComposite(
   });
 }
 
+/**
+ * Loads an image from a data URL with validation
+ * @param src - Data URL string for the image
+ * @returns Promise resolving to HTMLImageElement
+ */
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     // Validate data URL format
     if (!src || typeof src !== "string") {
-      console.error("Export: Invalid image src:", src);
       reject(new Error("Invalid image src: not a string"));
       return;
     }
 
     if (!src.startsWith("data:image/")) {
-      console.error(
-        "Export: Invalid data URL format:",
-        src.substring(0, 50) + "..."
-      );
       reject(new Error("Invalid data URL: not an image data URL"));
       return;
     }
@@ -276,21 +286,11 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     const img = new Image();
 
     img.onload = () => {
-      console.log("Export: Image loaded successfully:", {
-        width: img.width,
-        height: img.height,
-        src: src.substring(0, 50) + "...",
-      });
       resolve(img);
     };
 
     img.onerror = (error) => {
-      console.error("Export: Failed to load image from data URL:", {
-        error,
-        dataURLStart: src.substring(0, 100) + "...",
-        dataURLLength: src.length,
-      });
-      reject(error);
+      reject(new Error(`Failed to load image: ${error}`));
     };
 
     img.src = src;

@@ -200,8 +200,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           skewY: obj.skewY || 0,
         };
 
-        console.log("Object modified with transform:", normalizedTransform);
-
         onLayerUpdate(layerId, {
           transform: normalizedTransform,
         });
@@ -209,21 +207,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
       // Add additional debugging events for skew mode
       canvas.on("object:scaling", (e) => {
-        if (transformMode === "skew") {
-          console.log("Scaling in skew mode:", {
-            skewX: e.target?.skewX,
-            skewY: e.target?.skewY,
-            scaleX: e.target?.scaleX,
-            scaleY: e.target?.scaleY,
-          });
-        }
+        // Additional event handling for skew mode can be added here if needed
       });
 
       canvas.on("object:skewing", (e) => {
-        console.log("Skewing detected:", {
-          skewX: e.target?.skewX,
-          skewY: e.target?.skewY,
-        });
+        // Skewing events can be tracked here for debugging if needed
       });
 
       // Handle selection events
@@ -401,20 +389,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const canvas = fabricCanvasRef.current;
       if (!canvas) return;
 
-      console.log(`Transform mode changed to: ${transformMode}`);
-
       const objects = canvas.getObjects();
-      console.log(`Canvas has ${objects.length} objects`);
 
       objects.forEach((obj, index) => {
-        console.log(`Object ${index} properties before update:`, {
-          type: obj.type,
-          hasControls: obj.hasControls,
-          lockSkewingX: obj.lockSkewingX,
-          lockSkewingY: obj.lockSkewingY,
-        });
-
-        // Get the layer ID for this object to check if it's locked
         const layerId = objectLayerMapRef.current.get(obj);
         const layer = project?.layers.find((l) => l.id === layerId);
         const isLocked = layer?.locked || false;
@@ -819,21 +796,27 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             (l) => l.id === canvasState.selectedLayerId
           );
           if (selectedLayer?.locked) {
-            console.log("Cannot draw mask on locked layer");
+            // Cannot draw mask on locked layer - skip point addition
             return;
           }
 
-          console.log("Mouse down in mask mode");
           const pointer = canvas.getPointer(e.e);
           const point = { x: pointer.x, y: pointer.y };
-          console.log("Adding point:", point);
 
           if (!maskDrawingRef.current.isDrawing) {
-            // Start new mask
+            // Start new mask - automatically enable mask for this layer
             maskDrawingRef.current.isDrawing = true;
             maskDrawingRef.current.points = [point];
             maskDrawingRef.current.pointCircles = [];
             maskDrawingRef.current.targetLayerId = canvasState.selectedLayerId;
+
+            // Automatically enable the mask when starting to draw
+            onLayerUpdate(canvasState.selectedLayerId, {
+              mask: {
+                ...selectedLayer!.mask,
+                enabled: true,
+              },
+            });
 
             // Add first point circle
             const pointCircle = new Circle({
@@ -1319,10 +1302,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         }
 
         if (!dataURL.startsWith("data:image/")) {
-          console.error(
-            "Invalid data URL format:",
-            dataURL.substring(0, 50) + "..."
-          );
           reject(new Error("Invalid data URL: not an image data URL"));
           return;
         }

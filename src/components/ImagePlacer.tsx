@@ -13,7 +13,6 @@ import {
   FolderOpen,
   RotateCcw,
   Plus,
-  FileText,
   Archive,
   Move3D,
   Maximize,
@@ -45,6 +44,22 @@ export default function ImagePlacer() {
     pointCount: 0,
   });
 
+  const [error, setError] = useState<string | null>(null);
+
+  // Memoize sorted layers for better performance (layers don't have zIndex, so use array order)
+  const sortedLayers = useMemo(() => {
+    if (!project?.layers) return [];
+    return [...project.layers];
+  }, [project?.layers]);
+
+  // Memoize selected layer for performance
+  const selectedLayer = useMemo(() => {
+    if (!canvasState.selectedLayerId || !project?.layers) return undefined;
+    return project.layers.find(
+      (layer) => layer.id === canvasState.selectedLayerId
+    );
+  }, [canvasState.selectedLayerId, project?.layers]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const overlayInputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
@@ -74,8 +89,13 @@ export default function ImagePlacer() {
     }
   }, [canvasState.selectedLayerId]);
 
+  /**
+   * Updates layer properties and triggers canvas re-render
+   */
   const handleLayerUpdate = useCallback(
     (layerId: string, updates: Partial<Layer>) => {
+      if (!project) return;
+
       setProject((prev) => {
         if (!prev) return null;
 
@@ -94,41 +114,66 @@ export default function ImagePlacer() {
     []
   );
 
+  /**
+   * Handles base image upload and initializes a new project
+   */
   const handleBaseImageUpload = (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Clear any previous errors
+    setError(null);
+
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        const baseImage: BaseImage = {
-          name: file.name,
-          width: img.width,
-          height: img.height,
-          imageData: e.target?.result as string,
-          originalFile: file,
-        };
+        try {
+          const baseImage: BaseImage = {
+            name: file.name,
+            width: img.width,
+            height: img.height,
+            imageData: e.target?.result as string,
+            originalFile: file,
+          };
 
-        const newProject: Project = {
-          version: 1,
-          base: baseImage,
-          layers: [],
-          metadata: {
-            created: new Date().toISOString(),
-            modified: new Date().toISOString(),
-          },
-        };
+          const newProject: Project = {
+            version: 1,
+            base: baseImage,
+            layers: [],
+            metadata: {
+              created: new Date().toISOString(),
+              modified: new Date().toISOString(),
+            },
+          };
 
-        setProject(newProject);
+          setProject(newProject);
+        } catch (error) {
+          setError(
+            `Failed to load base image: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`
+          );
+        }
+      };
+      img.onerror = () => {
+        setError(
+          "Failed to load the selected image file. Please try a different image."
+        );
       };
       img.src = e.target?.result as string;
+    };
+    reader.onerror = () => {
+      setError("Failed to read the selected file. Please try again.");
     };
     reader.readAsDataURL(file);
   };
 
+  /**
+   * Handles overlay image uploads and adds them as new layers
+   */
   const handleOverlayUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file || !project) return;
@@ -217,17 +262,9 @@ export default function ImagePlacer() {
     event.target.value = "";
   };
 
-  const exportProjectJSON = async () => {
-    if (!project) return;
-
-    try {
-      const blob = await ProjectExporter.exportJSON(project);
-      ProjectExporter.downloadBlob(blob, "project.json");
-    } catch (error) {
-      console.error("Error exporting JSON:", error);
-    }
-  };
-
+  /**
+   * Exports the current project as a ZIP file with all assets
+   */
   const exportProjectZIP = async () => {
     if (!project) return;
 
@@ -288,7 +325,10 @@ export default function ImagePlacer() {
           zipContent.files[`assets/${projectData.base.name}`];
         if (baseImageFile) {
           const baseImageBlob = await baseImageFile.async("blob");
-          const baseImageDataUrl = await blobToDataURL(baseImageBlob);
+          const baseImageDataUrl = await blobToDataURL(
+            baseImageBlob,
+            projectData.base.name
+          );
           projectData.base.imageData = baseImageDataUrl;
         }
 
@@ -297,7 +337,10 @@ export default function ImagePlacer() {
           const layerImageFile = zipContent.files[`assets/${layer.name}`];
           if (layerImageFile) {
             const layerImageBlob = await layerImageFile.async("blob");
-            const layerImageDataUrl = await blobToDataURL(layerImageBlob);
+            const layerImageDataUrl = await blobToDataURL(
+              layerImageBlob,
+              layer.name
+            );
             layer.imageData = layerImageDataUrl;
           }
         }
@@ -310,8 +353,6 @@ export default function ImagePlacer() {
             author: projectData.metadata?.author,
           },
         });
-
-        console.log("ZIP project loaded successfully");
       } catch (error) {
         console.error("Error loading ZIP project:", error);
         alert("Error loading ZIP project file. Please check the file format.");
@@ -340,15 +381,13 @@ export default function ImagePlacer() {
             },
           });
 
-          // Reset canvas state
+          // Reset canvas state for new project
           setCanvasState((prev) => ({
             ...prev,
             selectedLayerId: undefined,
           }));
-
-          console.log("JSON project loaded successfully");
         } catch (error) {
-          console.error("Error loading project:", error);
+          console.error("Error loading JSON project:", error);
           alert("Error loading project file. Please check the file format.");
         }
       };
@@ -359,12 +398,58 @@ export default function ImagePlacer() {
     event.target.value = "";
   };
 
-  const blobToDataURL = (blob: Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
+  /**
+   * Converts a Blob to a data URL with proper MIME type detection
+   * Handles cases where JSZip extracts files with incorrect MIME types
+   */
+  const blobToDataURL = (blob: Blob, filename?: string): Promise<string> => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        // If blob doesn't have proper MIME type, try to infer it from filename
+        let mimeType = blob.type;
+
+        if (
+          (blob.type === "application/octet-stream" || !blob.type) &&
+          filename
+        ) {
+          const ext = filename.toLowerCase().split(".").pop();
+
+          switch (ext) {
+            case "jpg":
+            case "jpeg":
+              mimeType = "image/jpeg";
+              break;
+            case "png":
+              mimeType = "image/png";
+              break;
+            case "gif":
+              mimeType = "image/gif";
+              break;
+            case "webp":
+              mimeType = "image/webp";
+              break;
+            case "bmp":
+              mimeType = "image/bmp";
+              break;
+            default:
+              mimeType = "application/octet-stream";
+          }
+        }
+
+        // Convert blob to array buffer and then to base64
+        const arrayBuffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = "";
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const base64 = btoa(binary);
+
+        const dataURL = `data:${mimeType};base64,${base64}`;
+        resolve(dataURL);
+      } catch (error) {
+        reject(error);
+      }
     });
   };
 
@@ -381,24 +466,24 @@ export default function ImagePlacer() {
         tool: "select",
         transformMode: "normal",
       });
-      
+
       // Reset mask drawing state
       setMaskDrawingState({
         isDrawing: false,
         pointCount: 0,
       });
-      
+
       // Clear file input values to allow reloading the same files
       if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+        fileInputRef.current.value = "";
       }
       if (overlayInputRef.current) {
-        overlayInputRef.current.value = '';
+        overlayInputRef.current.value = "";
       }
       if (projectInputRef.current) {
-        projectInputRef.current.value = '';
+        projectInputRef.current.value = "";
       }
-      
+
       // Clear canvas selection to ensure clean state
       if (fabricCanvasRef.current) {
         fabricCanvasRef.current.clearSelection();
@@ -439,18 +524,11 @@ export default function ImagePlacer() {
                 Add Overlay
               </button>
               <button
-                onClick={exportProjectJSON}
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm flex items-center gap-2"
-              >
-                <FileText size={16} />
-                Export JSON
-              </button>
-              <button
                 onClick={exportProjectZIP}
                 className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm flex items-center gap-2"
               >
                 <Archive size={16} />
-                Export ZIP
+                Export
               </button>
               <button
                 onClick={resetProject}
@@ -485,6 +563,28 @@ export default function ImagePlacer() {
           className="hidden"
         />
       </header>
+
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-50 border-l-4 border-red-400 p-4 mb-4">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <X className="h-5 w-5 text-red-400" />
+            </div>
+            <div className="ml-3">
+              <p className="text-sm text-red-700">{error}</p>
+            </div>
+            <div className="ml-auto pl-3">
+              <button
+                onClick={() => setError(null)}
+                className="text-red-400 hover:text-red-600"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 flex">
         {/* Left Sidebar - Layers */}
@@ -623,7 +723,6 @@ export default function ImagePlacer() {
                           title="Delete layer"
                         >
                           <Trash2 size={14} />
-                          Delete
                         </button>
                       </div>
                     </div>
@@ -670,33 +769,23 @@ export default function ImagePlacer() {
                           />
                           <span className="text-gray-700">Show</span>
                         </label>
-
-                        <button
-                          disabled={layer.locked}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!layer.locked) {
-                              setCanvasState((prev) => ({
-                                ...prev,
-                                selectedLayerId: layer.id,
-                                tool: "mask",
-                              }));
-                            }
-                          }}
-                          className={`text-xs px-2 py-1 rounded transition-colors ${
-                            layer.locked
-                              ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                              : "bg-blue-600 text-white hover:bg-blue-700"
-                          }`}
-                          title={
-                            layer.locked
-                              ? "Cannot draw on locked layer"
-                              : "Draw mask"
-                          }
-                        >
-                          Draw
-                        </button>
                       </div>
+
+                      {!layer.locked && (
+                        <div className="text-xs text-gray-600 mt-2 p-2 bg-blue-50 rounded">
+                          {canvasState.tool === "mask" &&
+                          canvasState.selectedLayerId === layer.id ? (
+                            <span className="text-blue-700 flex items-center gap-1">
+                              <MousePointer2 size={12} />
+                              Click on canvas to start drawing mask
+                            </span>
+                          ) : (
+                            <span>
+                              Switch to Mask tool to draw on this layer
+                            </span>
+                          )}
+                        </div>
+                      )}
 
                       {layer.mask.path.length > 0 && (
                         <div className="flex items-center justify-between text-xs text-gray-600">
