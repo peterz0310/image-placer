@@ -1,35 +1,12 @@
 "use client";
 
-import { Layer, BlendMode } from "@/types";
-import {
-  Lock,
-  Move,
-  RotateCw,
-  Maximize2,
-  Eye,
-  Zap,
-  Palette,
-} from "lucide-react";
+import { Layer } from "@/types";
+import { Lock, Move, RotateCw, Maximize2, Eye, Zap } from "lucide-react";
 
 interface LayerPropertiesProps {
   layer: Layer | null;
   onUpdateLayer: (updates: Partial<Layer>) => void;
 }
-
-const BLEND_MODES: BlendMode[] = [
-  "normal",
-  "multiply",
-  "screen",
-  "overlay",
-  "soft-light",
-  "hard-light",
-  "color-dodge",
-  "color-burn",
-  "darken",
-  "lighten",
-  "difference",
-  "exclusion",
-];
 
 export default function LayerProperties({
   layer,
@@ -357,32 +334,6 @@ export default function LayerProperties({
             layer.locked ? "cursor-not-allowed opacity-50" : ""
           }`}
         />
-      </div>
-
-      {/* Blend Mode */}
-      <div>
-        <label className="text-sm font-medium mb-2 text-gray-900 flex items-center gap-2">
-          <Palette size={16} className="text-gray-600" />
-          Blend Mode
-        </label>
-        <select
-          value={layer.blendMode}
-          onChange={(e) =>
-            handlePropertyChange("blendMode", e.target.value as BlendMode)
-          }
-          disabled={layer.locked}
-          className={`w-full px-2 py-1 text-sm border-2 rounded focus:border-blue-500 focus:outline-none ${
-            layer.locked
-              ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
-              : "border-gray-300 bg-white text-gray-900"
-          }`}
-        >
-          {BLEND_MODES.map((mode) => (
-            <option key={mode} value={mode}>
-              {mode.charAt(0).toUpperCase() + mode.slice(1).replace("-", " ")}
-            </option>
-          ))}
-        </select>
       </div>
 
       {/* Reset Transform */}

@@ -229,7 +229,6 @@ export default function ImagePlacer() {
           feather: 0,
         },
         opacity: 1,
-        blendMode: "normal",
         visible: true,
         locked: false,
         imageData: e.target?.result as string,

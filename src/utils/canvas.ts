@@ -72,13 +72,12 @@ export class CanvasRenderer {
 
   private async drawLayer(layer: Layer, scale: number) {
     const img = await this.loadImage(layer.imageData!);
-    const { transform, opacity, blendMode } = layer;
+    const { transform, opacity } = layer;
 
     this.ctx.save();
 
-    // Set opacity and blend mode
+    // Set opacity
     this.ctx.globalAlpha = opacity;
-    this.ctx.globalCompositeOperation = blendMode as GlobalCompositeOperation;
 
     // Calculate position and size
     const centerX = transform.left * this.canvas.width;
@@ -178,12 +177,10 @@ export class CanvasRenderer {
           if (!layer.visible || !layer.imageData) continue;
 
           const img = await this.loadImage(layer.imageData);
-          const { transform, opacity, blendMode } = layer;
+          const { transform, opacity } = layer;
 
           exportCtx.save();
           exportCtx.globalAlpha = opacity;
-          exportCtx.globalCompositeOperation =
-            blendMode as GlobalCompositeOperation;
 
           const centerX = transform.left * exportCanvas.width;
           const centerY = transform.top * exportCanvas.height;

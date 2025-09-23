@@ -20,20 +20,6 @@ export interface Mask {
   feather: number;
 }
 
-export type BlendMode =
-  | "normal"
-  | "multiply"
-  | "screen"
-  | "overlay"
-  | "soft-light"
-  | "hard-light"
-  | "color-dodge"
-  | "color-burn"
-  | "darken"
-  | "lighten"
-  | "difference"
-  | "exclusion";
-
 export interface Layer {
   id: string;
   name: string;
@@ -41,7 +27,6 @@ export interface Layer {
   quad: QuadWarp;
   mask: Mask;
   opacity: number;
-  blendMode: BlendMode;
   visible: boolean;
   locked: boolean;
   imageData?: string;

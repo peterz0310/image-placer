@@ -178,8 +178,6 @@ export async function renderComposite(
 
         ctx.save();
         ctx.globalAlpha = layer.opacity;
-        ctx.globalCompositeOperation =
-          layer.blendMode as GlobalCompositeOperation;
 
         const centerX = layer.transform.left * canvas.width;
         const centerY = layer.transform.top * canvas.height;
