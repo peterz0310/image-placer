@@ -1,12 +1,24 @@
 "use client";
 
-import { MousePointer2, Maximize, Circle, Scissors } from "lucide-react";
+import {
+  MousePointer2,
+  Maximize,
+  Circle,
+  Scissors,
+  Undo2,
+  Redo2,
+} from "lucide-react";
 
 interface FloatingToolbarProps {
   tool: "select" | "mask";
   transformMode: "normal" | "skew";
   onToolChange: (tool: "select" | "mask") => void;
   onTransformModeChange: (mode: "normal" | "skew") => void;
+  // History props
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 export default function FloatingToolbar({
@@ -14,9 +26,48 @@ export default function FloatingToolbar({
   transformMode,
   onToolChange,
   onTransformModeChange,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
 }: FloatingToolbarProps) {
   return (
     <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-10 bg-white shadow-lg rounded-lg border p-2 flex gap-2">
+      {/* History Controls */}
+      {(onUndo || onRedo) && (
+        <>
+          <div className="flex gap-1">
+            <button
+              onClick={onUndo}
+              disabled={!canUndo}
+              className={`p-2 rounded transition-colors ${
+                canUndo
+                  ? "text-blue-600 hover:bg-blue-50"
+                  : "text-gray-400 cursor-not-allowed"
+              }`}
+              title={canUndo ? "Undo (Cmd+Z)" : "Nothing to undo"}
+            >
+              <Undo2 size={16} />
+            </button>
+            <button
+              onClick={onRedo}
+              disabled={!canRedo}
+              className={`p-2 rounded transition-colors ${
+                canRedo
+                  ? "text-green-600 hover:bg-green-50"
+                  : "text-gray-400 cursor-not-allowed"
+              }`}
+              title={canRedo ? "Redo (Cmd+Shift+Z)" : "Nothing to redo"}
+            >
+              <Redo2 size={16} />
+            </button>
+          </div>
+
+          {/* Separator */}
+          <div className="w-px bg-gray-300"></div>
+        </>
+      )}
+
       {/* Tool Selection */}
       <div className="flex bg-gray-100 rounded">
         <button

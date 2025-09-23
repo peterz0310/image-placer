@@ -6,6 +6,7 @@ import FabricCanvas, { FabricCanvasRef } from "./FabricCanvas";
 import LayerProperties from "./LayerProperties";
 import FloatingToolbar from "./FloatingToolbar";
 import { ProjectExporter, renderComposite } from "@/utils/export";
+import { useHistory, useHistoryKeyboard } from "@/hooks/useHistory";
 import JSZip from "jszip";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -31,7 +32,34 @@ import {
 } from "lucide-react";
 
 export default function ImagePlacer() {
-  const [project, setProject] = useState<Project | null>(null);
+  // Initialize history system
+  const {
+    canUndo,
+    canRedo,
+    undo,
+    redo,
+    saveState,
+    clearHistory,
+    getHistoryInfo,
+    getCurrentProject,
+  } = useHistory() as ReturnType<typeof useHistory> & {
+    getCurrentProject: () => Project | null;
+  };
+
+  // Get project from history or use local state as fallback
+  const historyProject = getCurrentProject();
+  const [localProject, setLocalProject] = useState<Project | null>(null);
+
+  // Use history project if available, otherwise use local project
+  const project = historyProject !== null ? historyProject : localProject;
+
+  // Sync local project when history changes
+  useEffect(() => {
+    if (historyProject !== null) {
+      setLocalProject(historyProject);
+    }
+  }, [historyProject]);
+
   const [canvasState, setCanvasState] = useState<CanvasState>({
     zoom: 1,
     pan: { x: 0, y: 0 },
@@ -46,6 +74,26 @@ export default function ImagePlacer() {
 
   const [error, setError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+
+  // Enable keyboard shortcuts for undo/redo
+  useHistoryKeyboard(undo, redo, canUndo, canRedo);
+
+  /**
+   * Updates project state and saves to history
+   */
+  const updateProject = useCallback(
+    (
+      updater: (prev: Project | null) => Project | null,
+      description = "Update project"
+    ) => {
+      const newProject = updater(project);
+      if (newProject !== project) {
+        setLocalProject(newProject);
+        saveState(newProject, description);
+      }
+    },
+    [project, saveState]
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const overlayInputRef = useRef<HTMLInputElement>(null);
@@ -96,7 +144,7 @@ export default function ImagePlacer() {
     (layerId: string, updates: Partial<Layer>) => {
       if (!project) return;
 
-      setProject((prev) => {
+      updateProject((prev) => {
         if (!prev) return null;
 
         return {
@@ -109,9 +157,9 @@ export default function ImagePlacer() {
             modified: new Date().toISOString(),
           },
         };
-      });
+      }, `Update layer: ${project.layers.find((l) => l.id === layerId)?.name || "Unknown"}`);
     },
-    [project]
+    [project, updateProject]
   );
 
   /**
@@ -164,7 +212,9 @@ export default function ImagePlacer() {
             },
           };
 
-          setProject(newProject);
+          setLocalProject(newProject);
+          clearHistory(); // Clear previous history when loading a new project
+          saveState(newProject, "Load base image");
         } catch (error) {
           setError(
             `Failed to load base image: ${
@@ -268,17 +318,19 @@ export default function ImagePlacer() {
         originalFile: file,
       };
 
-      setProject((prev) =>
-        prev
-          ? {
-              ...prev,
-              layers: [...prev.layers, newLayer],
-              metadata: {
-                ...prev.metadata!,
-                modified: new Date().toISOString(),
-              },
-            }
-          : null
+      updateProject(
+        (prev) =>
+          prev
+            ? {
+                ...prev,
+                layers: [...prev.layers, newLayer],
+                metadata: {
+                  ...prev.metadata!,
+                  modified: new Date().toISOString(),
+                },
+              }
+            : null,
+        `Add layer: ${newLayer.name}`
       );
 
       // Switch to transform mode and select the new layer
@@ -390,7 +442,7 @@ export default function ImagePlacer() {
             }
           }
 
-          setProject({
+          const loadedProject = {
             ...projectData,
             metadata: {
               created:
@@ -398,7 +450,10 @@ export default function ImagePlacer() {
               modified: new Date().toISOString(),
               author: projectData.metadata?.author,
             },
-          });
+          };
+          setLocalProject(loadedProject);
+          saveState(loadedProject, "Load ZIP project");
+          clearHistory(); // Clear previous history when loading a new project
         } catch (zipError) {
           console.error("Error loading ZIP project:", zipError);
           setError(
@@ -421,7 +476,7 @@ export default function ImagePlacer() {
               }
             });
 
-            setProject({
+            const loadedProject = {
               ...projectData,
               metadata: {
                 created:
@@ -429,7 +484,10 @@ export default function ImagePlacer() {
                 modified: new Date().toISOString(),
                 author: projectData.metadata?.author,
               },
-            });
+            };
+            setLocalProject(loadedProject);
+            saveState(loadedProject, "Load JSON project");
+            clearHistory(); // Clear previous history when loading a new project
 
             // Reset canvas state for new project
             setCanvasState((prev) => ({
@@ -522,7 +580,9 @@ export default function ImagePlacer() {
         "Are you sure you want to start over? This will clear all your work."
       )
     ) {
-      setProject(null);
+      setLocalProject(null);
+      clearHistory();
+      saveState(null, "Reset project");
       setCanvasState({
         zoom: 1,
         pan: { x: 0, y: 0 },
@@ -568,6 +628,7 @@ export default function ImagePlacer() {
           </div>
           Image Placer
         </h1>
+
         <div className="flex gap-2">
           {!project ? (
             <>
@@ -756,7 +817,7 @@ export default function ImagePlacer() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setProject((prev) => {
+                            updateProject((prev) => {
                               if (!prev) return null;
 
                               return {
@@ -771,7 +832,7 @@ export default function ImagePlacer() {
                                   modified: new Date().toISOString(),
                                 },
                               };
-                            });
+                            }, `Toggle visibility: ${layer.name}`);
                           }}
                           className={`text-xs px-2 py-1 rounded transition-colors font-medium flex items-center gap-1 ${
                             layer.visible
@@ -791,7 +852,7 @@ export default function ImagePlacer() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setProject((prev) => {
+                            updateProject((prev) => {
                               if (!prev) return null;
 
                               const targetLayer = prev.layers.find(
@@ -826,7 +887,7 @@ export default function ImagePlacer() {
                                   modified: new Date().toISOString(),
                                 },
                               };
-                            });
+                            }, `Toggle lock: ${layer.name}`);
                           }}
                           className={`text-xs px-2 py-1 rounded transition-colors font-medium flex items-center gap-1 ${
                             layer.locked
@@ -848,15 +909,17 @@ export default function ImagePlacer() {
                           onClick={(e) => {
                             e.stopPropagation();
                             fabricCanvasRef.current?.removeLayer(layer.id);
-                            setProject((prev) =>
-                              prev
-                                ? {
-                                    ...prev,
-                                    layers: prev.layers.filter(
-                                      (l) => l.id !== layer.id
-                                    ),
-                                  }
-                                : null
+                            updateProject(
+                              (prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      layers: prev.layers.filter(
+                                        (l) => l.id !== layer.id
+                                      ),
+                                    }
+                                  : null,
+                              `Delete layer: ${layer.name}`
                             );
                             if (canvasState.selectedLayerId === layer.id) {
                               setCanvasState((prev) => ({
@@ -885,7 +948,7 @@ export default function ImagePlacer() {
                             checked={layer.mask.enabled}
                             onChange={(e) => {
                               e.stopPropagation();
-                              setProject((prev) => {
+                              updateProject((prev) => {
                                 if (!prev) return null;
 
                                 return {
@@ -906,7 +969,7 @@ export default function ImagePlacer() {
                                     modified: new Date().toISOString(),
                                   },
                                 };
-                              });
+                              }, `Toggle mask enable: ${layer.name}`);
                             }}
                             className="mr-1 w-3 h-3"
                           />
@@ -919,7 +982,7 @@ export default function ImagePlacer() {
                             checked={layer.mask.visible}
                             onChange={(e) => {
                               e.stopPropagation();
-                              setProject((prev) => {
+                              updateProject((prev) => {
                                 if (!prev) return null;
 
                                 return {
@@ -940,7 +1003,7 @@ export default function ImagePlacer() {
                                     modified: new Date().toISOString(),
                                   },
                                 };
-                              });
+                              }, `Toggle mask visibility: ${layer.name}`);
                             }}
                             className="mr-1 w-3 h-3"
                           />
@@ -1025,6 +1088,10 @@ export default function ImagePlacer() {
               onTransformModeChange={(transformMode) =>
                 setCanvasState((prev) => ({ ...prev, transformMode }))
               }
+              canUndo={canUndo}
+              canRedo={canRedo}
+              onUndo={undo}
+              onRedo={redo}
             />
           )}
           {project ? (
