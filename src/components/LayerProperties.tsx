@@ -1,6 +1,15 @@
 "use client";
 
 import { Layer, BlendMode } from "@/types";
+import {
+  Lock,
+  Move,
+  RotateCw,
+  Maximize2,
+  Eye,
+  Zap,
+  Palette,
+} from "lucide-react";
 
 interface LayerPropertiesProps {
   layer: Layer | null;
@@ -59,12 +68,23 @@ export default function LayerProperties({
     <div className="p-4 space-y-4 text-gray-900">
       <div>
         <h3 className="font-semibold mb-2 text-gray-900">Layer Properties</h3>
-        <div className="text-sm text-gray-700 mb-4">{layer.name}</div>
+        <div className="text-sm text-gray-700 mb-4">
+          {layer.name}
+          {layer.locked && <span className=" text-yellow-600"> • Locked</span>}
+        </div>
       </div>
+
+      {layer.locked && (
+        <div className="p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800 flex items-center gap-2">
+          <Lock size={16} />
+          This layer is locked. Unlock it to make changes.
+        </div>
+      )}
 
       {/* Position Controls */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">
+        <label className="text-sm font-medium mb-2 text-gray-900 flex items-center gap-2">
+          <Move size={16} className="text-gray-600" />
           Position
         </label>
         <div className="grid grid-cols-2 gap-2">
@@ -81,7 +101,12 @@ export default function LayerProperties({
               onChange={(e) =>
                 handleTransformChange("left", parseFloat(e.target.value))
               }
-              className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
+              disabled={layer.locked}
+              className={`w-full px-2 py-1 text-xs border-2 rounded focus:border-blue-500 focus:outline-none ${
+                layer.locked
+                  ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
+                  : "border-gray-300 bg-white text-gray-900"
+              }`}
             />
           </div>
           <div>
@@ -97,7 +122,12 @@ export default function LayerProperties({
               onChange={(e) =>
                 handleTransformChange("top", parseFloat(e.target.value))
               }
-              className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
+              disabled={layer.locked}
+              className={`w-full px-2 py-1 text-xs border-2 rounded focus:border-blue-500 focus:outline-none ${
+                layer.locked
+                  ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
+                  : "border-gray-300 bg-white text-gray-900"
+              }`}
             />
           </div>
         </div>
@@ -105,7 +135,8 @@ export default function LayerProperties({
 
       {/* Scale Controls */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">
+        <label className="text-sm font-medium mb-2 text-gray-900 flex items-center gap-2">
+          <Maximize2 size={16} className="text-gray-600" />
           Scale
         </label>
         <div className="grid grid-cols-2 gap-2">
@@ -122,7 +153,12 @@ export default function LayerProperties({
               onChange={(e) =>
                 handleTransformChange("scaleX", parseFloat(e.target.value))
               }
-              className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
+              disabled={layer.locked}
+              className={`w-full px-2 py-1 text-xs border-2 rounded focus:border-blue-500 focus:outline-none ${
+                layer.locked
+                  ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
+                  : "border-gray-300 bg-white text-gray-900"
+              }`}
             />
           </div>
           <div>
@@ -138,7 +174,12 @@ export default function LayerProperties({
               onChange={(e) =>
                 handleTransformChange("scaleY", parseFloat(e.target.value))
               }
-              className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
+              disabled={layer.locked}
+              className={`w-full px-2 py-1 text-xs border-2 rounded focus:border-blue-500 focus:outline-none ${
+                layer.locked
+                  ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
+                  : "border-gray-300 bg-white text-gray-900"
+              }`}
             />
           </div>
         </div>
@@ -153,7 +194,12 @@ export default function LayerProperties({
                 },
               });
             }}
-            className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+            disabled={layer.locked}
+            className={`text-xs px-2 py-1 rounded transition-colors ${
+              layer.locked
+                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                : "bg-blue-600 hover:bg-blue-700 text-white"
+            }`}
           >
             Match X→Y
           </button>
@@ -167,7 +213,12 @@ export default function LayerProperties({
                 },
               });
             }}
-            className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+            disabled={layer.locked}
+            className={`text-xs px-2 py-1 rounded transition-colors ${
+              layer.locked
+                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                : "bg-blue-600 hover:bg-blue-700 text-white"
+            }`}
           >
             Match Y→X
           </button>
@@ -184,7 +235,12 @@ export default function LayerProperties({
                 },
               });
             }}
-            className="text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
+            disabled={layer.locked}
+            className={`text-xs px-2 py-1 rounded transition-colors ${
+              layer.locked
+                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                : "bg-green-600 hover:bg-green-700 text-white"
+            }`}
           >
             1:1 Ratio
           </button>
@@ -193,7 +249,8 @@ export default function LayerProperties({
 
       {/* Rotation */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">
+        <label className="text-sm font-medium mb-2 text-gray-900 flex items-center gap-2">
+          <RotateCw size={16} className="text-gray-600" />
           Rotation
         </label>
         <input
@@ -205,7 +262,12 @@ export default function LayerProperties({
           onChange={(e) =>
             handleTransformChange("angle", parseFloat(e.target.value))
           }
-          className="w-full px-2 py-1 text-xs border rounded"
+          disabled={layer.locked}
+          className={`w-full px-2 py-1 text-xs border rounded ${
+            layer.locked
+              ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
+              : "border-gray-300 bg-white text-gray-900"
+          }`}
         />
         <input
           type="range"
@@ -216,13 +278,17 @@ export default function LayerProperties({
           onChange={(e) =>
             handleTransformChange("angle", parseFloat(e.target.value))
           }
-          className="w-full mt-1"
+          disabled={layer.locked}
+          className={`w-full mt-1 ${
+            layer.locked ? "cursor-not-allowed opacity-50" : ""
+          }`}
         />
       </div>
 
       {/* Skew Controls */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">
+        <label className="text-sm font-medium mb-2 text-gray-900 flex items-center gap-2">
+          <Zap size={16} className="text-gray-600" />
           Skew
         </label>
         <div className="grid grid-cols-2 gap-2">
@@ -239,7 +305,12 @@ export default function LayerProperties({
               onChange={(e) =>
                 handleTransformChange("skewX", parseFloat(e.target.value))
               }
-              className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
+              disabled={layer.locked}
+              className={`w-full px-2 py-1 text-xs border-2 rounded focus:border-blue-500 focus:outline-none ${
+                layer.locked
+                  ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
+                  : "border-gray-300 bg-white text-gray-900"
+              }`}
             />
           </div>
           <div>
@@ -255,7 +326,12 @@ export default function LayerProperties({
               onChange={(e) =>
                 handleTransformChange("skewY", parseFloat(e.target.value))
               }
-              className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
+              disabled={layer.locked}
+              className={`w-full px-2 py-1 text-xs border-2 rounded focus:border-blue-500 focus:outline-none ${
+                layer.locked
+                  ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
+                  : "border-gray-300 bg-white text-gray-900"
+              }`}
             />
           </div>
         </div>
@@ -263,7 +339,8 @@ export default function LayerProperties({
 
       {/* Opacity */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">
+        <label className="text-sm font-medium mb-2 text-gray-900 flex items-center gap-2">
+          <Eye size={16} className="text-gray-600" />
           Opacity ({Math.round(layer.opacity * 100)}%)
         </label>
         <input
@@ -275,13 +352,17 @@ export default function LayerProperties({
           onChange={(e) =>
             handlePropertyChange("opacity", parseFloat(e.target.value))
           }
-          className="w-full"
+          disabled={layer.locked}
+          className={`w-full ${
+            layer.locked ? "cursor-not-allowed opacity-50" : ""
+          }`}
         />
       </div>
 
       {/* Blend Mode */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">
+        <label className="text-sm font-medium mb-2 text-gray-900 flex items-center gap-2">
+          <Palette size={16} className="text-gray-600" />
           Blend Mode
         </label>
         <select
@@ -289,7 +370,12 @@ export default function LayerProperties({
           onChange={(e) =>
             handlePropertyChange("blendMode", e.target.value as BlendMode)
           }
-          className="w-full px-2 py-1 text-sm border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
+          disabled={layer.locked}
+          className={`w-full px-2 py-1 text-sm border-2 rounded focus:border-blue-500 focus:outline-none ${
+            layer.locked
+              ? "border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
+              : "border-gray-300 bg-white text-gray-900"
+          }`}
         >
           {BLEND_MODES.map((mode) => (
             <option key={mode} value={mode}>
@@ -297,28 +383,6 @@ export default function LayerProperties({
             </option>
           ))}
         </select>
-      </div>
-
-      {/* Visibility and Lock */}
-      <div className="flex gap-2">
-        <label className="flex items-center">
-          <input
-            type="checkbox"
-            checked={layer.visible}
-            onChange={(e) => handlePropertyChange("visible", e.target.checked)}
-            className="mr-2"
-          />
-          <span className="text-sm text-gray-900">Visible</span>
-        </label>
-        <label className="flex items-center">
-          <input
-            type="checkbox"
-            checked={layer.locked}
-            onChange={(e) => handlePropertyChange("locked", e.target.checked)}
-            className="mr-2"
-          />
-          <span className="text-sm text-gray-900">Locked</span>
-        </label>
       </div>
 
       {/* Reset Transform */}
@@ -337,7 +401,12 @@ export default function LayerProperties({
               },
             });
           }}
-          className="w-full px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors"
+          disabled={layer.locked}
+          className={`w-full px-3 py-2 text-sm rounded font-medium transition-colors ${
+            layer.locked
+              ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+              : "bg-blue-600 hover:bg-blue-700 text-white"
+          }`}
         >
           Reset Transform
         </button>

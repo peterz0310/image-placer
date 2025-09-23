@@ -4,9 +4,32 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Project, Layer, BaseImage, CanvasState } from "@/types";
 import FabricCanvas, { FabricCanvasRef } from "./FabricCanvas";
 import LayerProperties from "./LayerProperties";
+import FloatingToolbar from "./FloatingToolbar";
 import { ProjectExporter, renderComposite } from "@/utils/export";
 import JSZip from "jszip";
 import { v4 as uuidv4 } from "uuid";
+import {
+  Upload,
+  FolderOpen,
+  RotateCcw,
+  Plus,
+  FileText,
+  Archive,
+  Move3D,
+  Maximize,
+  MousePointer2,
+  Scissors,
+  Eye,
+  EyeOff,
+  Lock,
+  LockOpen,
+  Trash2,
+  Image as ImageIcon,
+  Check,
+  X,
+  Layers,
+  Square,
+} from "lucide-react";
 
 export default function ImagePlacer() {
   const [project, setProject] = useState<Project | null>(null);
@@ -345,107 +368,96 @@ export default function ImagePlacer() {
     });
   };
 
+  const resetProject = () => {
+    if (
+      confirm(
+        "Are you sure you want to start over? This will clear all your work."
+      )
+    ) {
+      setProject(null);
+      setCanvasState({
+        zoom: 1,
+        pan: { x: 0, y: 0 },
+        tool: "select",
+        transformMode: "normal",
+      });
+      
+      // Reset mask drawing state
+      setMaskDrawingState({
+        isDrawing: false,
+        pointCount: 0,
+      });
+      
+      // Clear file input values to allow reloading the same files
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      if (overlayInputRef.current) {
+        overlayInputRef.current.value = '';
+      }
+      if (projectInputRef.current) {
+        projectInputRef.current.value = '';
+      }
+      
+      // Clear canvas selection to ensure clean state
+      if (fabricCanvasRef.current) {
+        fabricCanvasRef.current.clearSelection();
+      }
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col">
       {/* Header */}
       <header className="bg-gray-900 text-white p-4 flex justify-between items-center">
         <h1 className="text-xl font-bold">Image Placer</h1>
         <div className="flex gap-2">
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm"
-            disabled={false}
-          >
-            Load Base Image
-          </button>
-          <button
-            onClick={() => projectInputRef.current?.click()}
-            className="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm"
-          >
-            Load Project
-          </button>
-
-          {/* Transform Mode Toggle */}
-          {project && (
-            <div className="flex bg-gray-700 rounded">
+          {!project ? (
+            <>
               <button
-                onClick={() =>
-                  setCanvasState((prev) => ({
-                    ...prev,
-                    transformMode: "normal",
-                  }))
-                }
-                className={`px-3 py-2 text-sm rounded-l transition-colors ${
-                  canvasState.transformMode === "normal"
-                    ? "bg-blue-600 text-white"
-                    : "text-gray-300 hover:text-white hover:bg-gray-600"
-                }`}
+                onClick={() => fileInputRef.current?.click()}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm flex items-center gap-2"
               >
-                Transform
+                <Upload size={16} />
+                Load Base Image
               </button>
               <button
-                onClick={() =>
-                  setCanvasState((prev) => ({ ...prev, transformMode: "skew" }))
-                }
-                className={`px-3 py-2 text-sm rounded-r transition-colors ${
-                  canvasState.transformMode === "skew"
-                    ? "bg-blue-600 text-white"
-                    : "text-gray-300 hover:text-white hover:bg-gray-600"
-                }`}
+                onClick={() => projectInputRef.current?.click()}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm flex items-center gap-2"
               >
-                Skew
+                <FolderOpen size={16} />
+                Load Project
               </button>
-            </div>
-          )}
-
-          {/* Tool Selection */}
-          {project && (
-            <div className="flex bg-gray-700 rounded">
-              <button
-                onClick={() =>
-                  setCanvasState((prev) => ({ ...prev, tool: "select" }))
-                }
-                className={`px-3 py-2 text-sm rounded-l transition-colors ${
-                  canvasState.tool === "select"
-                    ? "bg-green-600 text-white"
-                    : "text-gray-300 hover:text-white hover:bg-gray-600"
-                }`}
-              >
-                Select
-              </button>
-              <button
-                onClick={() =>
-                  setCanvasState((prev) => ({ ...prev, tool: "mask" }))
-                }
-                className={`px-3 py-2 text-sm rounded-r transition-colors ${
-                  canvasState.tool === "mask"
-                    ? "bg-green-600 text-white"
-                    : "text-gray-300 hover:text-white hover:bg-gray-600"
-                }`}
-              >
-                Mask
-              </button>
-            </div>
-          )}
-          {project && (
+            </>
+          ) : (
             <>
               <button
                 onClick={() => overlayInputRef.current?.click()}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-sm"
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-sm flex items-center gap-2"
               >
+                <Plus size={16} />
                 Add Overlay
               </button>
               <button
                 onClick={exportProjectJSON}
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm"
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm flex items-center gap-2"
               >
+                <FileText size={16} />
                 Export JSON
               </button>
               <button
                 onClick={exportProjectZIP}
-                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm"
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm flex items-center gap-2"
               >
+                <Archive size={16} />
                 Export ZIP
+              </button>
+              <button
+                onClick={resetProject}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm flex items-center gap-2"
+              >
+                <RotateCcw size={16} />
+                Reset
               </button>
             </>
           )}
@@ -479,15 +491,21 @@ export default function ImagePlacer() {
         {project && (
           <div className="w-80 bg-gray-100 border-r flex flex-col">
             <div className="p-4">
-              <h3 className="font-semibold mb-4 text-gray-900">Layers</h3>
+              <h3 className="font-semibold mb-4 text-gray-900 flex items-center gap-2">
+                <Layers size={20} className="text-gray-600" />
+                Layers
+              </h3>
 
               {/* Base Image Info */}
               <div className="mb-4 p-3 bg-white rounded border">
-                <div className="font-medium text-sm text-gray-800">
+                <div className="font-medium text-sm text-gray-800 flex items-center gap-2">
+                  <Square size={16} className="text-blue-600" />
                   Base Image
                 </div>
-                <div className="text-sm text-gray-900">{project.base.name}</div>
-                <div className="text-xs text-gray-700">
+                <div className="text-sm text-gray-900 ml-6">
+                  {project.base.name}
+                </div>
+                <div className="text-xs text-gray-700 ml-6">
                   {project.base.width} × {project.base.height}
                 </div>
               </div>
@@ -512,18 +530,76 @@ export default function ImagePlacer() {
                     }}
                   >
                     <div className="flex justify-between items-center mb-2">
-                      <div>
-                        <div className="font-medium text-sm text-gray-900">
+                      <div className="flex-1">
+                        <div className="font-medium text-sm text-gray-900 flex items-center gap-2">
+                          <ImageIcon size={16} className="text-gray-600" />
                           {layer.name}
                         </div>
-                        <div className="text-xs text-gray-700">
+                        <div className="text-xs text-gray-700 ml-6">
                           Opacity: {Math.round(layer.opacity * 100)}%
                           {!layer.visible && " • Hidden"}
                         </div>
                       </div>
-                      <div className="flex gap-1">
+                      <div className="flex gap-1 items-center">
+                        {/* Visibility toggle */}
                         <button
-                          className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors font-medium"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleLayerUpdate(layer.id, {
+                              visible: !layer.visible,
+                            });
+                          }}
+                          className={`text-xs px-2 py-1 rounded transition-colors font-medium flex items-center gap-1 ${
+                            layer.visible
+                              ? "bg-blue-600 hover:bg-blue-700 text-white"
+                              : "bg-gray-300 hover:bg-gray-400 text-gray-700"
+                          }`}
+                          title={layer.visible ? "Hide layer" : "Show layer"}
+                        >
+                          {layer.visible ? (
+                            <Eye size={14} />
+                          ) : (
+                            <EyeOff size={14} />
+                          )}
+                        </button>
+
+                        {/* Lock toggle */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const wasLocked = layer.locked;
+                            handleLayerUpdate(layer.id, {
+                              locked: !layer.locked,
+                            });
+
+                            // If we're unlocking and this layer is selected, make sure it becomes selectable
+                            if (
+                              wasLocked &&
+                              canvasState.selectedLayerId === layer.id
+                            ) {
+                              // Force canvas to update selection after unlocking
+                              setTimeout(() => {
+                                fabricCanvasRef.current?.selectLayer(layer.id);
+                              }, 50);
+                            }
+                          }}
+                          className={`text-xs px-2 py-1 rounded transition-colors font-medium flex items-center gap-1 ${
+                            layer.locked
+                              ? "bg-yellow-600 hover:bg-yellow-700 text-white"
+                              : "bg-gray-300 hover:bg-gray-400 text-gray-700"
+                          }`}
+                          title={layer.locked ? "Unlock layer" : "Lock layer"}
+                        >
+                          {layer.locked ? (
+                            <Lock size={14} />
+                          ) : (
+                            <LockOpen size={14} />
+                          )}
+                        </button>
+
+                        {/* Delete button */}
+                        <button
+                          className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors font-medium flex items-center gap-1"
                           onClick={(e) => {
                             e.stopPropagation();
                             fabricCanvasRef.current?.removeLayer(layer.id);
@@ -544,7 +620,9 @@ export default function ImagePlacer() {
                               }));
                             }
                           }}
+                          title="Delete layer"
                         >
+                          <Trash2 size={14} />
                           Delete
                         </button>
                       </div>
@@ -594,15 +672,27 @@ export default function ImagePlacer() {
                         </label>
 
                         <button
+                          disabled={layer.locked}
                           onClick={(e) => {
                             e.stopPropagation();
-                            setCanvasState((prev) => ({
-                              ...prev,
-                              selectedLayerId: layer.id,
-                              tool: "mask",
-                            }));
+                            if (!layer.locked) {
+                              setCanvasState((prev) => ({
+                                ...prev,
+                                selectedLayerId: layer.id,
+                                tool: "mask",
+                              }));
+                            }
                           }}
-                          className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                          className={`text-xs px-2 py-1 rounded transition-colors ${
+                            layer.locked
+                              ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                              : "bg-blue-600 text-white hover:bg-blue-700"
+                          }`}
+                          title={
+                            layer.locked
+                              ? "Cannot draw on locked layer"
+                              : "Draw mask"
+                          }
                         >
                           Draw
                         </button>
@@ -658,7 +748,19 @@ export default function ImagePlacer() {
         )}
 
         {/* Canvas Area */}
-        <div className="flex-1 bg-gray-50 flex items-center justify-center">
+        <div className="flex-1 bg-gray-50 flex items-center justify-center relative">
+          {project && (
+            <FloatingToolbar
+              tool={canvasState.tool}
+              transformMode={canvasState.transformMode}
+              onToolChange={(tool) =>
+                setCanvasState((prev) => ({ ...prev, tool }))
+              }
+              onTransformModeChange={(transformMode) =>
+                setCanvasState((prev) => ({ ...prev, transformMode }))
+              }
+            />
+          )}
           {project ? (
             <FabricCanvas
               ref={fabricCanvasRef}
@@ -686,8 +788,13 @@ export default function ImagePlacer() {
             />
           ) : (
             <div className="text-center text-gray-500">
-              <p className="text-lg mb-2">Welcome to Image Placer</p>
-              <p>
+              <div className="flex justify-center mb-4">
+                <ImageIcon size={48} className="text-gray-300" />
+              </div>
+              <p className="text-lg mb-2 font-medium">
+                Welcome to Image Placer
+              </p>
+              <p className="text-sm">
                 Start by loading a base image to begin creating your composition
               </p>
             </div>
@@ -726,20 +833,22 @@ export default function ImagePlacer() {
                                   fabricCanvasRef.current?.finishMaskDrawing()
                                 }
                                 disabled={maskDrawingState.pointCount < 3}
-                                className={`px-3 py-1 text-xs rounded transition-colors ${
+                                className={`px-3 py-1 text-xs rounded transition-colors flex items-center gap-1 ${
                                   maskDrawingState.pointCount >= 3
                                     ? "bg-green-600 hover:bg-green-700 text-white"
                                     : "bg-gray-300 text-gray-500 cursor-not-allowed"
                                 }`}
                               >
+                                <Check size={12} />
                                 Finish Mask
                               </button>
                               <button
                                 onClick={() =>
                                   fabricCanvasRef.current?.cancelMaskDrawing()
                                 }
-                                className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
+                                className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors flex items-center gap-1"
                               >
+                                <X size={12} />
                                 Cancel
                               </button>
                             </div>

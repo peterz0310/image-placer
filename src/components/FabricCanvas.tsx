@@ -329,7 +329,15 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
     // Update canvas when project changes
     useEffect(() => {
-      if (!project || !fabricCanvasRef.current) return;
+      if (!fabricCanvasRef.current) return;
+
+      if (!project) {
+        // Clear canvas when project is null (reset scenario)
+        const canvas = fabricCanvasRef.current;
+        canvas.clear();
+        objectLayerMapRef.current.clear();
+        return;
+      }
 
       updateCanvasFromProject(project);
     }, [project]);
@@ -361,6 +369,15 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               skewY: layer.transform.skewY || 0,
               opacity: layer.opacity,
               visible: layer.visible,
+              selectable: !layer.locked,
+              evented: !layer.locked,
+              lockMovementX: layer.locked,
+              lockMovementY: layer.locked,
+              lockRotation: layer.locked,
+              lockScalingX: layer.locked,
+              lockScalingY: layer.locked,
+              lockSkewingX: layer.locked,
+              lockSkewingY: layer.locked,
             });
 
             // Also update mask visualization for this layer
@@ -374,7 +391,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       project?.layers
         ?.map(
           (l) =>
-            `${l.id}-${l.transform.left}-${l.transform.top}-${l.transform.scaleX}-${l.transform.scaleY}-${l.transform.angle}-${l.opacity}-${l.visible}-${l.mask.enabled}-${l.mask.visible}-${l.mask.path.length}-${l.mask.feather}`
+            `${l.id}-${l.transform.left}-${l.transform.top}-${l.transform.scaleX}-${l.transform.scaleY}-${l.transform.angle}-${l.opacity}-${l.visible}-${l.locked}-${l.mask.enabled}-${l.mask.visible}-${l.mask.path.length}-${l.mask.feather}`
         )
         .join(","),
     ]);
@@ -397,7 +414,39 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           lockSkewingY: obj.lockSkewingY,
         });
 
-        if (transformMode === "skew") {
+        // Get the layer ID for this object to check if it's locked
+        const layerId = objectLayerMapRef.current.get(obj);
+        const layer = project?.layers.find((l) => l.id === layerId);
+        const isLocked = layer?.locked || false;
+
+        if (isLocked) {
+          // Layer is locked - skip transform mode changes and ensure it stays locked
+          obj.selectable = false;
+          obj.evented = false;
+          obj.lockMovementX = true;
+          obj.lockMovementY = true;
+          obj.lockRotation = true;
+          obj.lockScalingX = true;
+          obj.lockScalingY = true;
+          obj.lockSkewingX = true;
+          obj.lockSkewingY = true;
+
+          obj.setControlsVisibility({
+            tl: false,
+            tr: false,
+            br: false,
+            bl: false,
+            ml: false,
+            mt: false,
+            mr: false,
+            mb: false,
+            mtr: false,
+          });
+
+          obj.borderColor = "#999999";
+          obj.cornerColor = "#999999";
+          obj.cornerSize = 0;
+        } else if (transformMode === "skew") {
           // Enable skewing mode
           obj.lockSkewingX = false;
           obj.lockSkewingY = false;
@@ -624,7 +673,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       });
 
       canvas.renderAll();
-    }, [transformMode]);
+    }, [transformMode, project]);
 
     // Handle tool changes
     useEffect(() => {
@@ -765,6 +814,15 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
       const handleMouseDown = (e: any) => {
         if (canvasState?.tool === "mask" && canvasState?.selectedLayerId) {
+          // Check if the selected layer is locked
+          const selectedLayer = project?.layers.find(
+            (l) => l.id === canvasState.selectedLayerId
+          );
+          if (selectedLayer?.locked) {
+            console.log("Cannot draw mask on locked layer");
+            return;
+          }
+
           console.log("Mouse down in mask mode");
           const pointer = canvas.getPointer(e.e);
           const point = { x: pointer.x, y: pointer.y };
@@ -908,7 +966,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           canvasElement.removeEventListener("contextmenu", handleContextMenu);
         }
       };
-    }, [canvasState?.tool, canvasState?.selectedLayerId, onLayerUpdate]);
+    }, [
+      canvasState?.tool,
+      canvasState?.selectedLayerId,
+      onLayerUpdate,
+      project,
+    ]);
 
     const updateCanvasFromProject = async (project: Project) => {
       const canvas = fabricCanvasRef.current;
@@ -996,59 +1059,87 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           opacity: layer.opacity,
           originX: "center",
           originY: "center",
+          selectable: !layer.locked,
+          evented: !layer.locked,
+          lockMovementX: layer.locked,
+          lockMovementY: layer.locked,
+          lockRotation: layer.locked,
+          lockScalingX: layer.locked,
+          lockScalingY: layer.locked,
+          lockSkewingX: layer.locked,
+          lockSkewingY: layer.locked,
         });
 
-        // Apply transform mode settings immediately
-        if (transformMode === "skew") {
-          fabricImg.lockSkewingX = false;
-          fabricImg.lockSkewingY = false;
-          fabricImg.lockRotation = true;
-          fabricImg.lockScalingX = false; // Keep scaling unlocked but hide corner controls
-          fabricImg.lockScalingY = false; // Keep scaling unlocked but hide corner controls
-          fabricImg.lockMovementX = false;
-          fabricImg.lockMovementY = false;
+        // Apply transform mode settings immediately, but respect layer locking
+        if (!layer.locked) {
+          if (transformMode === "skew") {
+            fabricImg.lockSkewingX = false;
+            fabricImg.lockSkewingY = false;
+            fabricImg.lockRotation = true;
+            fabricImg.lockScalingX = false; // Keep scaling unlocked but hide corner controls
+            fabricImg.lockScalingY = false; // Keep scaling unlocked but hide corner controls
+            fabricImg.lockMovementX = false;
+            fabricImg.lockMovementY = false;
 
-          // Hide corner controls, show only side controls for skewing
-          fabricImg.setControlsVisibility({
-            tl: false, // top-left corner
-            tr: false, // top-right corner
-            br: false, // bottom-right corner
-            bl: false, // bottom-left corner
-            ml: true, // middle-left (for skewY)
-            mt: true, // middle-top (for skewX)
-            mr: true, // middle-right (for skewY)
-            mb: true, // middle-bottom (for skewX)
-            mtr: false, // rotation control
-          });
+            // Hide corner controls, show only side controls for skewing
+            fabricImg.setControlsVisibility({
+              tl: false, // top-left corner
+              tr: false, // top-right corner
+              br: false, // bottom-right corner
+              bl: false, // bottom-left corner
+              ml: true, // middle-left (for skewY)
+              mt: true, // middle-top (for skewX)
+              mr: true, // middle-right (for skewY)
+              mb: true, // middle-bottom (for skewX)
+              mtr: false, // rotation control
+            });
 
-          fabricImg.borderColor = "#ff6600";
-          fabricImg.cornerColor = "#ff6600";
-          fabricImg.cornerSize = 10;
+            fabricImg.borderColor = "#ff6600";
+            fabricImg.cornerColor = "#ff6600";
+            fabricImg.cornerSize = 10;
+          } else {
+            fabricImg.lockSkewingX = true;
+            fabricImg.lockSkewingY = true;
+            fabricImg.lockRotation = false;
+            fabricImg.lockScalingX = false;
+            fabricImg.lockScalingY = false;
+            fabricImg.lockMovementX = false;
+            fabricImg.lockMovementY = false;
+
+            // Show all controls in normal mode
+            fabricImg.setControlsVisibility({
+              tl: true, // top-left corner
+              tr: true, // top-right corner
+              br: true, // bottom-right corner
+              bl: true, // bottom-left corner
+              ml: true, // middle-left
+              mt: true, // middle-top
+              mr: true, // middle-right
+              mb: true, // middle-bottom
+              mtr: true, // rotation control
+            });
+
+            fabricImg.borderColor = "#0066cc";
+            fabricImg.cornerColor = "#0066cc";
+            fabricImg.cornerSize = 8;
+          }
         } else {
-          fabricImg.lockSkewingX = true;
-          fabricImg.lockSkewingY = true;
-          fabricImg.lockRotation = false;
-          fabricImg.lockScalingX = false;
-          fabricImg.lockScalingY = false;
-          fabricImg.lockMovementX = false;
-          fabricImg.lockMovementY = false;
-
-          // Show all controls in normal mode
+          // Layer is locked - hide all controls and show locked visual style
           fabricImg.setControlsVisibility({
-            tl: true, // top-left corner
-            tr: true, // top-right corner
-            br: true, // bottom-right corner
-            bl: true, // bottom-left corner
-            ml: true, // middle-left
-            mt: true, // middle-top
-            mr: true, // middle-right
-            mb: true, // middle-bottom
-            mtr: true, // rotation control
+            tl: false,
+            tr: false,
+            br: false,
+            bl: false,
+            ml: false,
+            mt: false,
+            mr: false,
+            mb: false,
+            mtr: false,
           });
 
-          fabricImg.borderColor = "#0066cc";
-          fabricImg.cornerColor = "#0066cc";
-          fabricImg.cornerSize = 8;
+          fabricImg.borderColor = "#999999";
+          fabricImg.cornerColor = "#999999";
+          fabricImg.cornerSize = 0;
         }
 
         fabricImg.transparentCorners = false;
@@ -1111,6 +1202,15 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           skewY: layer.transform.skewY || 0,
           opacity: layer.opacity,
           visible: layer.visible,
+          selectable: !layer.locked,
+          evented: !layer.locked,
+          lockMovementX: layer.locked,
+          lockMovementY: layer.locked,
+          lockRotation: layer.locked,
+          lockScalingX: layer.locked,
+          lockScalingY: layer.locked,
+          lockSkewingX: layer.locked,
+          lockSkewingY: layer.locked,
         });
 
         // Update mask visualization
