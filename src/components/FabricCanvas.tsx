@@ -804,19 +804,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           const point = { x: pointer.x, y: pointer.y };
 
           if (!maskDrawingRef.current.isDrawing) {
-            // Start new mask - automatically enable mask for this layer
+            // Start new mask
             maskDrawingRef.current.isDrawing = true;
             maskDrawingRef.current.points = [point];
             maskDrawingRef.current.pointCircles = [];
             maskDrawingRef.current.targetLayerId = canvasState.selectedLayerId;
-
-            // Automatically enable the mask when starting to draw
-            onLayerUpdate(canvasState.selectedLayerId, {
-              mask: {
-                ...selectedLayer!.mask,
-                enabled: true,
-              },
-            });
 
             // Add first point circle
             const pointCircle = new Circle({
@@ -976,9 +968,23 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         layerCount: project.layers.length,
       };
 
-      // Clear existing objects
+      // Clear existing objects but preserve mask drawing elements if any
+      const maskElements: FabricObject[] = [];
+      if (maskDrawingRef.current.isDrawing) {
+        // Preserve mask drawing elements
+        if (maskDrawingRef.current.currentPolygon) {
+          maskElements.push(maskDrawingRef.current.currentPolygon);
+        }
+        maskElements.push(...maskDrawingRef.current.pointCircles);
+      }
+
       canvas.clear();
       objectLayerMapRef.current.clear();
+
+      // Re-add preserved mask drawing elements
+      maskElements.forEach((element) => {
+        canvas.add(element);
+      });
 
       // Set canvas size based on base image dimensions
       const maxWidth = 800;

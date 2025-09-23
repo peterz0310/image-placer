@@ -111,7 +111,7 @@ export default function ImagePlacer() {
         };
       });
     },
-    []
+    [project]
   );
 
   /**
@@ -494,7 +494,16 @@ export default function ImagePlacer() {
     <div className="h-screen flex flex-col">
       {/* Header */}
       <header className="bg-gray-900 text-white p-4 flex justify-between items-center">
-        <h1 className="text-xl font-bold">Image Placer</h1>
+        <h1 className="text-xl font-bold flex items-center gap-2">
+          <div className="relative">
+            <ImageIcon size={24} className="text-gray-300" />
+            <Layers
+              size={12}
+              className="text-blue-400 absolute -bottom-0.5 -right-0.5"
+            />
+          </div>
+          Image Placer
+        </h1>
         <div className="flex gap-2">
           {!project ? (
             <>
@@ -515,13 +524,6 @@ export default function ImagePlacer() {
             </>
           ) : (
             <>
-              <button
-                onClick={() => overlayInputRef.current?.click()}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-sm flex items-center gap-2"
-              >
-                <Plus size={16} />
-                Add Overlay
-              </button>
               <button
                 onClick={exportProjectZIP}
                 className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm flex items-center gap-2"
@@ -609,6 +611,17 @@ export default function ImagePlacer() {
                 </div>
               </div>
 
+              {/* Add Overlay Button */}
+              <div className="mb-4">
+                <button
+                  onClick={() => overlayInputRef.current?.click()}
+                  className="w-full px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-colors shadow-sm"
+                >
+                  <Plus size={18} />
+                  Add Overlay Image
+                </button>
+              </div>
+
               {/* Layers List */}
               <div className="space-y-2">
                 {project.layers.map((layer, index) => (
@@ -644,8 +657,21 @@ export default function ImagePlacer() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleLayerUpdate(layer.id, {
-                              visible: !layer.visible,
+                            setProject((prev) => {
+                              if (!prev) return null;
+
+                              return {
+                                ...prev,
+                                layers: prev.layers.map((l) =>
+                                  l.id === layer.id
+                                    ? { ...l, visible: !l.visible }
+                                    : l
+                                ),
+                                metadata: {
+                                  ...prev.metadata!,
+                                  modified: new Date().toISOString(),
+                                },
+                              };
                             });
                           }}
                           className={`text-xs px-2 py-1 rounded transition-colors font-medium flex items-center gap-1 ${
@@ -666,21 +692,42 @@ export default function ImagePlacer() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            const wasLocked = layer.locked;
-                            handleLayerUpdate(layer.id, {
-                              locked: !layer.locked,
-                            });
+                            setProject((prev) => {
+                              if (!prev) return null;
 
-                            // If we're unlocking and this layer is selected, make sure it becomes selectable
-                            if (
-                              wasLocked &&
-                              canvasState.selectedLayerId === layer.id
-                            ) {
-                              // Force canvas to update selection after unlocking
-                              setTimeout(() => {
-                                fabricCanvasRef.current?.selectLayer(layer.id);
-                              }, 50);
-                            }
+                              const targetLayer = prev.layers.find(
+                                (l) => l.id === layer.id
+                              );
+                              if (!targetLayer) return prev;
+
+                              const wasLocked = targetLayer.locked;
+
+                              // If we're unlocking and this layer is selected, make sure it becomes selectable
+                              if (
+                                wasLocked &&
+                                canvasState.selectedLayerId === layer.id
+                              ) {
+                                // Force canvas to update selection after unlocking
+                                setTimeout(() => {
+                                  fabricCanvasRef.current?.selectLayer(
+                                    layer.id
+                                  );
+                                }, 50);
+                              }
+
+                              return {
+                                ...prev,
+                                layers: prev.layers.map((l) =>
+                                  l.id === layer.id
+                                    ? { ...l, locked: !l.locked }
+                                    : l
+                                ),
+                                metadata: {
+                                  ...prev.metadata!,
+                                  modified: new Date().toISOString(),
+                                },
+                              };
+                            });
                           }}
                           className={`text-xs px-2 py-1 rounded transition-colors font-medium flex items-center gap-1 ${
                             layer.locked
@@ -739,11 +786,27 @@ export default function ImagePlacer() {
                             checked={layer.mask.enabled}
                             onChange={(e) => {
                               e.stopPropagation();
-                              handleLayerUpdate(layer.id, {
-                                mask: {
-                                  ...layer.mask,
-                                  enabled: e.target.checked,
-                                },
+                              setProject((prev) => {
+                                if (!prev) return null;
+
+                                return {
+                                  ...prev,
+                                  layers: prev.layers.map((l) =>
+                                    l.id === layer.id
+                                      ? {
+                                          ...l,
+                                          mask: {
+                                            ...l.mask,
+                                            enabled: e.target.checked,
+                                          },
+                                        }
+                                      : l
+                                  ),
+                                  metadata: {
+                                    ...prev.metadata!,
+                                    modified: new Date().toISOString(),
+                                  },
+                                };
                               });
                             }}
                             className="mr-1 w-3 h-3"
@@ -757,11 +820,27 @@ export default function ImagePlacer() {
                             checked={layer.mask.visible}
                             onChange={(e) => {
                               e.stopPropagation();
-                              handleLayerUpdate(layer.id, {
-                                mask: {
-                                  ...layer.mask,
-                                  visible: e.target.checked,
-                                },
+                              setProject((prev) => {
+                                if (!prev) return null;
+
+                                return {
+                                  ...prev,
+                                  layers: prev.layers.map((l) =>
+                                    l.id === layer.id
+                                      ? {
+                                          ...l,
+                                          mask: {
+                                            ...l.mask,
+                                            visible: e.target.checked,
+                                          },
+                                        }
+                                      : l
+                                  ),
+                                  metadata: {
+                                    ...prev.metadata!,
+                                    modified: new Date().toISOString(),
+                                  },
+                                };
                               });
                             }}
                             className="mr-1 w-3 h-3"
@@ -875,16 +954,77 @@ export default function ImagePlacer() {
               }}
             />
           ) : (
-            <div className="text-center text-gray-500">
-              <div className="flex justify-center mb-4">
-                <ImageIcon size={48} className="text-gray-300" />
+            <div className="text-center text-gray-500 max-w-md mx-auto p-8">
+              <div className="flex justify-center mb-6">
+                <div className="relative">
+                  <ImageIcon size={64} className="text-gray-300" />
+                  <Layers
+                    size={24}
+                    className="text-blue-400 absolute -bottom-1 -right-1"
+                  />
+                </div>
               </div>
-              <p className="text-lg mb-2 font-medium">
+              <h1 className="text-2xl mb-4 font-bold text-gray-800">
                 Welcome to Image Placer
+              </h1>
+              <p className="text-base mb-6 text-gray-600 leading-relaxed">
+                Create stunning compositions by layering images with precision
+                tools for transformation, masking, and positioning.
               </p>
-              <p className="text-sm">
-                Start by loading a base image to begin creating your composition
-              </p>
+
+              <div className="text-left space-y-4 mb-8">
+                <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+                  <h3 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                    <Upload size={16} className="text-blue-500" />
+                    Getting Started
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    Load a base image to start your project, then add overlay
+                    images as layers.
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+                  <h3 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                    <Move3D size={16} className="text-green-500" />
+                    Features
+                  </h3>
+                  <ul className="text-sm text-gray-600 space-y-1">
+                    <li>• Transform layers (move, scale, rotate, skew)</li>
+                    <li>• Create custom masks for precise control</li>
+                    <li>• Adjust opacity and layer visibility</li>
+                    <li>• Export high-quality compositions</li>
+                  </ul>
+                </div>
+
+                <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+                  <h3 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                    <Archive size={16} className="text-orange-500" />
+                    Project Management
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    Save your work as project files and resume editing anytime
+                    with full layer preservation.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
+                >
+                  <Upload size={18} />
+                  Start with Base Image
+                </button>
+                <button
+                  onClick={() => projectInputRef.current?.click()}
+                  className="px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
+                >
+                  <FolderOpen size={18} />
+                  Load Project
+                </button>
+              </div>
             </div>
           )}
         </div>
