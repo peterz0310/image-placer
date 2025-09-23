@@ -587,11 +587,12 @@ export default function ImagePlacer() {
         </div>
       )}
 
-      <div className="flex-1 flex">
+      <div className="flex-1 flex min-h-0">
         {/* Left Sidebar - Layers */}
         {project && (
-          <div className="w-80 bg-gray-100 border-r flex flex-col">
-            <div className="p-4">
+          <div className="w-80 bg-gray-100 border-r flex flex-col min-h-0">
+            {/* Fixed Header */}
+            <div className="p-4 flex-shrink-0">
               <h3 className="font-semibold mb-4 text-gray-900 flex items-center gap-2">
                 <Layers size={20} className="text-gray-600" />
                 Layers
@@ -621,8 +622,10 @@ export default function ImagePlacer() {
                   Add Overlay Image
                 </button>
               </div>
+            </div>
 
-              {/* Layers List */}
+            {/* Scrollable Layers List */}
+            <div className="flex-1 overflow-y-auto px-4 pb-4">
               <div className="space-y-2">
                 {project.layers.map((layer, index) => (
                   <div
@@ -642,14 +645,41 @@ export default function ImagePlacer() {
                     }}
                   >
                     <div className="flex justify-between items-center mb-2">
-                      <div className="flex-1">
-                        <div className="font-medium text-sm text-gray-900 flex items-center gap-2">
-                          <ImageIcon size={16} className="text-gray-600" />
-                          {layer.name}
-                        </div>
-                        <div className="text-xs text-gray-700 ml-6">
-                          Opacity: {Math.round(layer.opacity * 100)}%
-                          {!layer.visible && " • Hidden"}
+                      <div className="flex-1 flex items-center gap-2">
+                        <div className="flex items-center gap-2">
+                          {/* Image thumbnail preview */}
+                          <div className="w-8 h-8 rounded border bg-gray-100 flex-shrink-0 overflow-hidden">
+                            {layer.imageData ? (
+                              <img
+                                src={layer.imageData}
+                                alt={layer.name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <ImageIcon
+                                size={16}
+                                className="text-gray-400 m-auto"
+                              />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div
+                              className="font-medium text-sm text-gray-900 leading-tight"
+                              style={{
+                                display: "-webkit-box",
+                                WebkitBoxOrient: "vertical",
+                                WebkitLineClamp: 2,
+                                overflow: "hidden",
+                                wordBreak: "break-word",
+                              }}
+                            >
+                              {layer.name}
+                            </div>
+                            <div className="text-xs text-gray-700 mt-1">
+                              Opacity: {Math.round(layer.opacity * 100)}%
+                              {!layer.visible && " • Hidden"}
+                            </div>
+                          </div>
                         </div>
                       </div>
                       <div className="flex gap-1 items-center">
