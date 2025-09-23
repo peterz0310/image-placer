@@ -37,7 +37,10 @@ export default function LayerProperties({
     });
   };
 
-  const handlePropertyChange = (property: keyof Layer, value: any) => {
+  const handlePropertyChange = (
+    property: keyof Layer,
+    value: Layer[keyof Layer]
+  ) => {
     onUpdateLayer({ [property]: value });
   };
 

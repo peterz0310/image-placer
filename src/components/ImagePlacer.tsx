@@ -45,36 +45,36 @@ export default function ImagePlacer() {
   });
 
   const [error, setError] = useState<string | null>(null);
-
-  // Memoize sorted layers for better performance (layers don't have zIndex, so use array order)
-  const sortedLayers = useMemo(() => {
-    if (!project?.layers) return [];
-    return [...project.layers];
-  }, [project?.layers]);
-
-  // Memoize selected layer for performance
-  const selectedLayer = useMemo(() => {
-    if (!canvasState.selectedLayerId || !project?.layers) return undefined;
-    return project.layers.find(
-      (layer) => layer.id === canvasState.selectedLayerId
-    );
-  }, [canvasState.selectedLayerId, project?.layers]);
+  const [isExporting, setIsExporting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const overlayInputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const fabricCanvasRef = useRef<FabricCanvasRef>(null);
+  const objectURLsRef = useRef<Set<string>>(new Set());
 
-  // Update mask drawing state periodically
+  // Cleanup object URLs on unmount
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (fabricCanvasRef.current && canvasState.tool === "mask") {
-        const state = fabricCanvasRef.current.getMaskDrawingState();
-        setMaskDrawingState(state);
-      }
-    }, 100);
+    return () => {
+      objectURLsRef.current.forEach((url) => {
+        URL.revokeObjectURL(url);
+      });
+      objectURLsRef.current.clear();
+    };
+  }, []);
 
-    return () => clearInterval(interval);
+  // Update mask drawing state when tool changes or drawing starts/stops
+  useEffect(() => {
+    if (fabricCanvasRef.current && canvasState.tool === "mask") {
+      const state = fabricCanvasRef.current.getMaskDrawingState();
+      setMaskDrawingState(state);
+    } else {
+      // Reset mask drawing state when not in mask mode
+      setMaskDrawingState({
+        isDrawing: false,
+        pointCount: 0,
+      });
+    }
   }, [canvasState.tool]);
 
   // Update canvas selection when selectedLayerId changes
@@ -122,6 +122,21 @@ export default function ImagePlacer() {
   ) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith("image/")) {
+      setError("Please select a valid image file.");
+      return;
+    }
+
+    // Validate file size (max 50MB)
+    const maxSize = 50 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setError(
+        "Image file is too large. Please select an image smaller than 50MB."
+      );
+      return;
+    }
 
     // Clear any previous errors
     setError(null);
@@ -177,6 +192,24 @@ export default function ImagePlacer() {
   const handleOverlayUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file || !project) return;
+
+    // Validate file type
+    if (!file.type.startsWith("image/")) {
+      setError("Please select a valid image file.");
+      return;
+    }
+
+    // Validate file size (max 50MB)
+    const maxSize = 50 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setError(
+        "Image file is too large. Please select an image smaller than 50MB."
+      );
+      return;
+    }
+
+    // Clear any previous errors
+    setError(null);
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -265,7 +298,10 @@ export default function ImagePlacer() {
    * Exports the current project as a ZIP file with all assets
    */
   const exportProjectZIP = async () => {
-    if (!project) return;
+    if (!project || isExporting) return;
+
+    setIsExporting(true);
+    setError(null);
 
     try {
       // First render the composite
@@ -289,6 +325,13 @@ export default function ImagePlacer() {
       );
     } catch (error) {
       console.error("Error exporting ZIP:", error);
+      setError(
+        `Failed to export project: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -296,72 +339,24 @@ export default function ImagePlacer() {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (file.name.endsWith(".zip")) {
-      // Handle ZIP file
-      try {
-        const zip = new JSZip();
-        const zipContent = await zip.loadAsync(file);
+    setError(null);
 
-        // Look for project.json
-        const projectFile = zipContent.files["project.json"];
-        if (!projectFile) {
-          alert("Invalid project ZIP: project.json not found");
-          return;
-        }
-
-        const projectJson = await projectFile.async("string");
-        const projectData = JSON.parse(projectJson) as Project;
-
-        // Add backward compatibility for mask visibility
-        projectData.layers.forEach((layer) => {
-          if (layer.mask && typeof layer.mask.visible === "undefined") {
-            layer.mask.visible = true; // Default to visible for existing projects
-          }
-        });
-
-        // Load base image from assets
-        const baseImageFile =
-          zipContent.files[`assets/${projectData.base.name}`];
-        if (baseImageFile) {
-          const baseImageBlob = await baseImageFile.async("blob");
-          const baseImageDataUrl = await blobToDataURL(
-            baseImageBlob,
-            projectData.base.name
-          );
-          projectData.base.imageData = baseImageDataUrl;
-        }
-
-        // Load layer images from assets
-        for (const layer of projectData.layers) {
-          const layerImageFile = zipContent.files[`assets/${layer.name}`];
-          if (layerImageFile) {
-            const layerImageBlob = await layerImageFile.async("blob");
-            const layerImageDataUrl = await blobToDataURL(
-              layerImageBlob,
-              layer.name
-            );
-            layer.imageData = layerImageDataUrl;
-          }
-        }
-
-        setProject({
-          ...projectData,
-          metadata: {
-            created: projectData.metadata?.created || new Date().toISOString(),
-            modified: new Date().toISOString(),
-            author: projectData.metadata?.author,
-          },
-        });
-      } catch (error) {
-        console.error("Error loading ZIP project:", error);
-        alert("Error loading ZIP project file. Please check the file format.");
-      }
-    } else {
-      // Handle JSON file (existing logic)
-      const reader = new FileReader();
-      reader.onload = async (e) => {
+    try {
+      if (file.name.endsWith(".zip")) {
+        // Handle ZIP file
         try {
-          const projectData = JSON.parse(e.target?.result as string) as Project;
+          const zip = new JSZip();
+          const zipContent = await zip.loadAsync(file);
+
+          // Look for project.json
+          const projectFile = zipContent.files["project.json"];
+          if (!projectFile) {
+            setError("Invalid project ZIP: project.json not found");
+            return;
+          }
+
+          const projectJson = await projectFile.async("string");
+          const projectData = JSON.parse(projectJson) as Project;
 
           // Add backward compatibility for mask visibility
           projectData.layers.forEach((layer) => {
@@ -369,6 +364,31 @@ export default function ImagePlacer() {
               layer.mask.visible = true; // Default to visible for existing projects
             }
           });
+
+          // Load base image from assets
+          const baseImageFile =
+            zipContent.files[`assets/${projectData.base.name}`];
+          if (baseImageFile) {
+            const baseImageBlob = await baseImageFile.async("blob");
+            const baseImageDataUrl = await blobToDataURL(
+              baseImageBlob,
+              projectData.base.name
+            );
+            projectData.base.imageData = baseImageDataUrl;
+          }
+
+          // Load layer images from assets
+          for (const layer of projectData.layers) {
+            const layerImageFile = zipContent.files[`assets/${layer.name}`];
+            if (layerImageFile) {
+              const layerImageBlob = await layerImageFile.async("blob");
+              const layerImageDataUrl = await blobToDataURL(
+                layerImageBlob,
+                layer.name
+              );
+              layer.imageData = layerImageDataUrl;
+            }
+          }
 
           setProject({
             ...projectData,
@@ -379,18 +399,62 @@ export default function ImagePlacer() {
               author: projectData.metadata?.author,
             },
           });
-
-          // Reset canvas state for new project
-          setCanvasState((prev) => ({
-            ...prev,
-            selectedLayerId: undefined,
-          }));
-        } catch (error) {
-          console.error("Error loading JSON project:", error);
-          alert("Error loading project file. Please check the file format.");
+        } catch (zipError) {
+          console.error("Error loading ZIP project:", zipError);
+          setError(
+            "Error loading ZIP project file. Please check the file format."
+          );
         }
-      };
-      reader.readAsText(file);
+      } else {
+        // Handle JSON file (existing logic)
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          try {
+            const projectData = JSON.parse(
+              e.target?.result as string
+            ) as Project;
+
+            // Add backward compatibility for mask visibility
+            projectData.layers.forEach((layer) => {
+              if (layer.mask && typeof layer.mask.visible === "undefined") {
+                layer.mask.visible = true; // Default to visible for existing projects
+              }
+            });
+
+            setProject({
+              ...projectData,
+              metadata: {
+                created:
+                  projectData.metadata?.created || new Date().toISOString(),
+                modified: new Date().toISOString(),
+                author: projectData.metadata?.author,
+              },
+            });
+
+            // Reset canvas state for new project
+            setCanvasState((prev) => ({
+              ...prev,
+              selectedLayerId: undefined,
+            }));
+          } catch (jsonError) {
+            console.error("Error loading JSON project:", jsonError);
+            setError(
+              "Error loading project file. Please check the file format."
+            );
+          }
+        };
+        reader.onerror = () => {
+          setError("Failed to read the project file. Please try again.");
+        };
+        reader.readAsText(file);
+      }
+    } catch (error) {
+      console.error("Error loading project:", error);
+      setError(
+        `Failed to load project: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
 
     // Clear the input
@@ -526,10 +590,15 @@ export default function ImagePlacer() {
             <>
               <button
                 onClick={exportProjectZIP}
-                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm flex items-center gap-2"
+                disabled={isExporting}
+                className={`px-4 py-2 rounded text-sm flex items-center gap-2 transition-colors ${
+                  isExporting
+                    ? "bg-orange-400 cursor-not-allowed"
+                    : "bg-orange-600 hover:bg-orange-700"
+                }`}
               >
                 <Archive size={16} />
-                Export
+                {isExporting ? "Exporting..." : "Export"}
               </button>
               <button
                 onClick={resetProject}
@@ -982,6 +1051,7 @@ export default function ImagePlacer() {
                   tool: "select",
                 }));
               }}
+              onMaskStateChange={setMaskDrawingState}
             />
           ) : (
             <div className="text-center text-gray-500 max-w-md mx-auto p-8">

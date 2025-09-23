@@ -6,7 +6,6 @@ import {
   Image as FabricImage,
   FabricObject,
   Polygon,
-  Point,
   Circle,
 } from "fabric";
 import { Project, Layer, CanvasState } from "@/types";
@@ -22,6 +21,10 @@ interface FabricCanvasProps {
   ) => void;
   onMaskFinished?: () => void;
   onLayerSelected?: (layerId: string) => void;
+  onMaskStateChange?: (state: {
+    isDrawing: boolean;
+    pointCount: number;
+  }) => void;
 }
 
 export interface FabricCanvasRef {
@@ -46,6 +49,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       onCanvasStateChange,
       onMaskFinished,
       onLayerSelected,
+      onMaskStateChange,
     },
     ref
   ) => {
@@ -237,78 +241,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         }
       });
 
-      const finishMask = () => {
-        const canvas = fabricCanvasRef.current;
-        if (
-          !canvas ||
-          !maskDrawingRef.current.isDrawing ||
-          !maskDrawingRef.current.targetLayerId
-        )
-          return;
-
-        const points = maskDrawingRef.current.points;
-        if (points.length < 3) {
-          cancelMask();
-          return;
-        }
-
-        // Convert points to normalized coordinates (0-1 range)
-        const normalizedPoints: [number, number][] = points.map((point) => [
-          point.x / canvas.width,
-          point.y / canvas.height,
-        ]);
-
-        // Update layer with mask data
-        onLayerUpdate(maskDrawingRef.current.targetLayerId!, {
-          mask: {
-            enabled: true,
-            visible: true,
-            path: normalizedPoints,
-            feather: 2.0,
-          },
-        });
-
-        // Clean up
-        if (maskDrawingRef.current.currentPolygon) {
-          canvas.remove(maskDrawingRef.current.currentPolygon);
-        }
-
-        // Remove point circles
-        maskDrawingRef.current.pointCircles.forEach((circle) => {
-          canvas.remove(circle);
-        });
-
-        resetMaskDrawing();
-        canvas.renderAll();
-      };
-
-      const cancelMask = () => {
-        const canvas = fabricCanvasRef.current;
-        if (!canvas) return;
-
-        if (maskDrawingRef.current.currentPolygon) {
-          canvas.remove(maskDrawingRef.current.currentPolygon);
-        }
-
-        // Remove point circles
-        maskDrawingRef.current.pointCircles.forEach((circle) => {
-          canvas.remove(circle);
-        });
-
-        resetMaskDrawing();
-        canvas.renderAll();
-      };
-
-      const resetMaskDrawing = () => {
-        maskDrawingRef.current = {
-          isDrawing: false,
-          points: [],
-          pointCircles: [],
-          currentPolygon: undefined,
-          targetLayerId: undefined,
-        };
-      };
-
       return () => {
         canvas.dispose();
         fabricCanvasRef.current = null;
@@ -330,7 +262,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       updateCanvasFromProject(project);
     }, [project]);
 
-    // Update individual layer properties when they change (without rebuilding canvas)
+    // Update individual layer properties when they change (with optimized dependencies)
     useEffect(() => {
       if (!project || !fabricCanvasRef.current) return;
 
@@ -375,14 +307,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
         canvas.requestRenderAll();
       }
-    }, [
-      project?.layers
-        ?.map(
-          (l) =>
-            `${l.id}-${l.transform.left}-${l.transform.top}-${l.transform.scaleX}-${l.transform.scaleY}-${l.transform.angle}-${l.opacity}-${l.visible}-${l.locked}-${l.mask.enabled}-${l.mask.visible}-${l.mask.path.length}-${l.mask.feather}`
-        )
-        .join(","),
-    ]);
+    }, [project?.layers]); // Simplified dependency
 
     // Update transform controls when mode changes
     useEffect(() => {
@@ -707,7 +632,17 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       }
     }, [canvasState?.tool]);
 
-    // Mask drawing helper functions
+    // Helper function to notify parent of mask state changes
+    const notifyMaskStateChange = () => {
+      if (onMaskStateChange) {
+        onMaskStateChange({
+          isDrawing: maskDrawingRef.current.isDrawing,
+          pointCount: maskDrawingRef.current.points.length,
+        });
+      }
+    };
+
+    // Consolidated mask drawing helper functions
     const finishMask = () => {
       const canvas = fabricCanvasRef.current;
       if (
@@ -758,6 +693,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       };
 
       canvas.renderAll();
+      notifyMaskStateChange();
+
+      // Notify parent that mask drawing is finished
+      if (onMaskFinished) {
+        onMaskFinished();
+      }
     };
 
     const cancelMask = () => {
@@ -782,6 +723,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       };
 
       canvas.renderAll();
+      notifyMaskStateChange();
     };
 
     // Handle mask drawing events
@@ -840,6 +782,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             maskDrawingRef.current.currentPolygon = polygon;
             canvas.add(polygon);
             canvas.renderAll();
+            notifyMaskStateChange();
           } else {
             // Add point to current mask
             maskDrawingRef.current.points.push(point);
@@ -872,6 +815,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               }
             }
             canvas.renderAll();
+            notifyMaskStateChange();
           }
         }
       };

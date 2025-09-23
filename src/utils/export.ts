@@ -207,15 +207,16 @@ export async function renderComposite(
 
         // Handle masking
         if (layer.mask.enabled && layer.mask.path.length >= 3) {
-          // Create mask canvas
+          // Create mask canvas with base image dimensions (not layer dimensions)
+          // because mask coordinates are normalized to the base image
           const maskCanvas = MaskRenderer.createMaskCanvas(
             layer.mask.path,
-            scaledWidth,
-            scaledHeight,
+            canvas.width, // Use base image width
+            canvas.height, // Use base image height
             layer.mask.feather * scale
           );
 
-          // Create temporary canvas for masked image
+          // Create temporary canvas for the masked layer
           const tempCanvas = document.createElement("canvas");
           const tempCtx = tempCanvas.getContext("2d")!;
           tempCanvas.width = scaledWidth;
@@ -224,9 +225,39 @@ export async function renderComposite(
           // Draw image to temp canvas
           tempCtx.drawImage(img, 0, 0, scaledWidth, scaledHeight);
 
-          // Apply mask
+          // We need to extract the portion of the mask that corresponds to where
+          // this layer will be positioned on the canvas
+          const layerLeft = centerX - scaledWidth / 2;
+          const layerTop = centerY - scaledHeight / 2;
+
+          // Create a temporary canvas to extract the mask region
+          const extractedMaskCanvas = document.createElement("canvas");
+          const extractedMaskCtx = extractedMaskCanvas.getContext("2d")!;
+          extractedMaskCanvas.width = scaledWidth;
+          extractedMaskCanvas.height = scaledHeight;
+
+          // Draw the portion of the mask that overlaps with the layer
+          extractedMaskCtx.drawImage(
+            maskCanvas,
+            layerLeft,
+            layerTop,
+            scaledWidth,
+            scaledHeight, // source rectangle
+            0,
+            0,
+            scaledWidth,
+            scaledHeight // destination rectangle
+          );
+
+          // Apply mask to the layer image
           tempCtx.globalCompositeOperation = "destination-in";
-          tempCtx.drawImage(maskCanvas, 0, 0, scaledWidth, scaledHeight);
+          tempCtx.drawImage(
+            extractedMaskCanvas,
+            0,
+            0,
+            scaledWidth,
+            scaledHeight
+          );
 
           // Draw masked result
           ctx.drawImage(

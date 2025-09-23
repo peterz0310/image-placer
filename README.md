@@ -196,8 +196,8 @@ src/
 │   └── FloatingToolbar.tsx # Tool selection interface
 ├── types/               # TypeScript type definitions
 ├── utils/               # Utility functions
-│   ├── canvas.ts         # Canvas helper functions
-│   └── export.ts         # Project export/import logic
+│   ├── export.ts         # Project export/import logic
+│   └── mask.ts          # Mask rendering utilities
 └── styles/              # Global styles and Tailwind config
 ```
 
