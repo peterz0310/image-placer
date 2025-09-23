@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { Layer, BlendMode } from '@/types';
+import { Layer, BlendMode } from "@/types";
 
 interface LayerPropertiesProps {
   layer: Layer | null;
@@ -8,36 +8,46 @@ interface LayerPropertiesProps {
 }
 
 const BLEND_MODES: BlendMode[] = [
-  'normal',
-  'multiply',
-  'screen',
-  'overlay',
-  'soft-light',
-  'hard-light',
-  'color-dodge',
-  'color-burn',
-  'darken',
-  'lighten',
-  'difference',
-  'exclusion'
+  "normal",
+  "multiply",
+  "screen",
+  "overlay",
+  "soft-light",
+  "hard-light",
+  "color-dodge",
+  "color-burn",
+  "darken",
+  "lighten",
+  "difference",
+  "exclusion",
 ];
 
-export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertiesProps) {
+export default function LayerProperties({
+  layer,
+  onUpdateLayer,
+}: LayerPropertiesProps) {
   if (!layer) {
     return (
       <div className="p-4 text-center text-gray-700 bg-gray-50">
-        <p className="text-sm font-medium text-gray-800">Select a layer to edit its properties</p>
-        <p className="text-xs text-gray-600 mt-2">Click on a layer in the layers panel to start editing</p>
+        <p className="text-sm font-medium text-gray-800">
+          Select a layer to edit its properties
+        </p>
+        <p className="text-xs text-gray-600 mt-2">
+          Click on a layer in the layers panel to start editing
+        </p>
       </div>
     );
   }
 
-  const handleTransformChange = (property: keyof Layer['transform'], value: number) => {
+  const handleTransformChange = (
+    property: keyof Layer["transform"],
+    value: number
+  ) => {
     onUpdateLayer({
       transform: {
         ...layer.transform,
-        [property]: value
-      }
+        [property]: value,
+      },
     });
   };
 
@@ -54,29 +64,39 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
 
       {/* Position Controls */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">Position</label>
+        <label className="block text-sm font-medium mb-2 text-gray-900">
+          Position
+        </label>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-xs text-gray-700 mb-1 font-medium">Left</label>
+            <label className="block text-xs text-gray-700 mb-1 font-medium">
+              Left
+            </label>
             <input
               type="number"
               step="0.001"
               min="0"
               max="1"
               value={layer.transform.left.toFixed(3)}
-              onChange={(e) => handleTransformChange('left', parseFloat(e.target.value))}
+              onChange={(e) =>
+                handleTransformChange("left", parseFloat(e.target.value))
+              }
               className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-700 mb-1 font-medium">Top</label>
+            <label className="block text-xs text-gray-700 mb-1 font-medium">
+              Top
+            </label>
             <input
               type="number"
               step="0.001"
               min="0"
               max="1"
               value={layer.transform.top.toFixed(3)}
-              onChange={(e) => handleTransformChange('top', parseFloat(e.target.value))}
+              onChange={(e) =>
+                handleTransformChange("top", parseFloat(e.target.value))
+              }
               className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
             />
           </div>
@@ -85,29 +105,39 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
 
       {/* Scale Controls */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">Scale</label>
+        <label className="block text-sm font-medium mb-2 text-gray-900">
+          Scale
+        </label>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-xs text-gray-700 mb-1 font-medium">Scale X</label>
+            <label className="block text-xs text-gray-700 mb-1 font-medium">
+              Scale X
+            </label>
             <input
               type="number"
               step="0.01"
               min="0.01"
               max="10"
               value={layer.transform.scaleX.toFixed(2)}
-              onChange={(e) => handleTransformChange('scaleX', parseFloat(e.target.value))}
+              onChange={(e) =>
+                handleTransformChange("scaleX", parseFloat(e.target.value))
+              }
               className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-700 mb-1 font-medium">Scale Y</label>
+            <label className="block text-xs text-gray-700 mb-1 font-medium">
+              Scale Y
+            </label>
             <input
               type="number"
               step="0.01"
               min="0.01"
               max="10"
               value={layer.transform.scaleY.toFixed(2)}
-              onChange={(e) => handleTransformChange('scaleY', parseFloat(e.target.value))}
+              onChange={(e) =>
+                handleTransformChange("scaleY", parseFloat(e.target.value))
+              }
               className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
             />
           </div>
@@ -119,8 +149,8 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
               onUpdateLayer({
                 transform: {
                   ...layer.transform,
-                  scaleY: layer.transform.scaleX
-                }
+                  scaleY: layer.transform.scaleX,
+                },
               });
             }}
             className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
@@ -133,8 +163,8 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
               onUpdateLayer({
                 transform: {
                   ...layer.transform,
-                  scaleX: layer.transform.scaleY
-                }
+                  scaleX: layer.transform.scaleY,
+                },
               });
             }}
             className="text-xs px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
@@ -144,13 +174,14 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
           <button
             onClick={() => {
               // Reset to 1:1 aspect ratio
-              const avgScale = (layer.transform.scaleX + layer.transform.scaleY) / 2;
+              const avgScale =
+                (layer.transform.scaleX + layer.transform.scaleY) / 2;
               onUpdateLayer({
                 transform: {
                   ...layer.transform,
                   scaleX: avgScale,
-                  scaleY: avgScale
-                }
+                  scaleY: avgScale,
+                },
               });
             }}
             className="text-xs px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
@@ -162,14 +193,18 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
 
       {/* Rotation */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">Rotation</label>
+        <label className="block text-sm font-medium mb-2 text-gray-900">
+          Rotation
+        </label>
         <input
           type="number"
           step="1"
           min="-360"
           max="360"
           value={Math.round(layer.transform.angle)}
-          onChange={(e) => handleTransformChange('angle', parseFloat(e.target.value))}
+          onChange={(e) =>
+            handleTransformChange("angle", parseFloat(e.target.value))
+          }
           className="w-full px-2 py-1 text-xs border rounded"
         />
         <input
@@ -178,36 +213,48 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
           max="180"
           step="1"
           value={layer.transform.angle}
-          onChange={(e) => handleTransformChange('angle', parseFloat(e.target.value))}
+          onChange={(e) =>
+            handleTransformChange("angle", parseFloat(e.target.value))
+          }
           className="w-full mt-1"
         />
       </div>
 
       {/* Skew Controls */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">Skew</label>
+        <label className="block text-sm font-medium mb-2 text-gray-900">
+          Skew
+        </label>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-xs text-gray-700 mb-1 font-medium">Skew X</label>
+            <label className="block text-xs text-gray-700 mb-1 font-medium">
+              Skew X
+            </label>
             <input
               type="number"
               step="1"
               min="-45"
               max="45"
               value={Math.round(layer.transform.skewX || 0)}
-              onChange={(e) => handleTransformChange('skewX', parseFloat(e.target.value))}
+              onChange={(e) =>
+                handleTransformChange("skewX", parseFloat(e.target.value))
+              }
               className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-700 mb-1 font-medium">Skew Y</label>
+            <label className="block text-xs text-gray-700 mb-1 font-medium">
+              Skew Y
+            </label>
             <input
               type="number"
               step="1"
               min="-45"
               max="45"
               value={Math.round(layer.transform.skewY || 0)}
-              onChange={(e) => handleTransformChange('skewY', parseFloat(e.target.value))}
+              onChange={(e) =>
+                handleTransformChange("skewY", parseFloat(e.target.value))
+              }
               className="w-full px-2 py-1 text-xs border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
             />
           </div>
@@ -225,25 +272,98 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
           max="1"
           step="0.01"
           value={layer.opacity}
-          onChange={(e) => handlePropertyChange('opacity', parseFloat(e.target.value))}
+          onChange={(e) =>
+            handlePropertyChange("opacity", parseFloat(e.target.value))
+          }
           className="w-full"
         />
       </div>
 
       {/* Blend Mode */}
       <div>
-        <label className="block text-sm font-medium mb-2 text-gray-900">Blend Mode</label>
+        <label className="block text-sm font-medium mb-2 text-gray-900">
+          Blend Mode
+        </label>
         <select
           value={layer.blendMode}
-          onChange={(e) => handlePropertyChange('blendMode', e.target.value as BlendMode)}
+          onChange={(e) =>
+            handlePropertyChange("blendMode", e.target.value as BlendMode)
+          }
           className="w-full px-2 py-1 text-sm border-2 border-gray-300 rounded focus:border-blue-500 focus:outline-none bg-white text-gray-900"
         >
-          {BLEND_MODES.map(mode => (
+          {BLEND_MODES.map((mode) => (
             <option key={mode} value={mode}>
-              {mode.charAt(0).toUpperCase() + mode.slice(1).replace('-', ' ')}
+              {mode.charAt(0).toUpperCase() + mode.slice(1).replace("-", " ")}
             </option>
           ))}
         </select>
+      </div>
+
+      {/* Mask Controls */}
+      <div>
+        <label className="block text-sm font-medium mb-2 text-gray-900">
+          Mask
+        </label>
+        <div className="space-y-2">
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={layer.mask.enabled}
+              onChange={(e) =>
+                onUpdateLayer({
+                  mask: { ...layer.mask, enabled: e.target.checked },
+                })
+              }
+              className="mr-2"
+            />
+            <span className="text-sm text-gray-900">Enable Mask</span>
+          </label>
+
+          {layer.mask.enabled && (
+            <>
+              <div>
+                <label className="block text-xs text-gray-700 mb-1 font-medium">
+                  Feather ({layer.mask.feather.toFixed(1)}px)
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="10"
+                  step="0.5"
+                  value={layer.mask.feather}
+                  onChange={(e) =>
+                    onUpdateLayer({
+                      mask: {
+                        ...layer.mask,
+                        feather: parseFloat(e.target.value),
+                      },
+                    })
+                  }
+                  className="w-full"
+                />
+              </div>
+
+              <div className="text-xs text-gray-600">
+                {layer.mask.path.length > 0
+                  ? `Mask has ${layer.mask.path.length} points`
+                  : "No mask drawn yet"}
+              </div>
+
+              {layer.mask.path.length > 0 && (
+                <button
+                  onClick={() =>
+                    onUpdateLayer({
+                      mask: { ...layer.mask, path: [] },
+                    })
+                  }
+                  className="w-full px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
+                >
+                  Clear Mask
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Visibility and Lock */}
@@ -252,7 +372,7 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
           <input
             type="checkbox"
             checked={layer.visible}
-            onChange={(e) => handlePropertyChange('visible', e.target.checked)}
+            onChange={(e) => handlePropertyChange("visible", e.target.checked)}
             className="mr-2"
           />
           <span className="text-sm text-gray-900">Visible</span>
@@ -261,7 +381,7 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
           <input
             type="checkbox"
             checked={layer.locked}
-            onChange={(e) => handlePropertyChange('locked', e.target.checked)}
+            onChange={(e) => handlePropertyChange("locked", e.target.checked)}
             className="mr-2"
           />
           <span className="text-sm text-gray-900">Locked</span>
@@ -280,8 +400,8 @@ export default function LayerProperties({ layer, onUpdateLayer }: LayerPropertie
                 scaleY: 0.25,
                 angle: 0,
                 skewX: 0,
-                skewY: 0
-              }
+                skewY: 0,
+              },
             });
           }}
           className="w-full px-3 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors"

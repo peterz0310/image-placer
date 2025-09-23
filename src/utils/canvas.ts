@@ -1,4 +1,5 @@
 import { Project, Layer } from "@/types";
+import { MaskRenderer } from "./mask";
 
 export class CanvasRenderer {
   private canvas: HTMLCanvasElement;
@@ -105,14 +106,47 @@ export class CanvasRenderer {
     const scaledWidth = img.width * transform.scaleX * scale;
     const scaledHeight = img.height * transform.scaleY * scale;
 
-    // Draw the image centered
-    this.ctx.drawImage(
-      img,
-      -scaledWidth / 2,
-      -scaledHeight / 2,
-      scaledWidth,
-      scaledHeight
-    );
+    // Handle masking
+    if (layer.mask.enabled && layer.mask.path.length >= 3) {
+      // Create mask canvas
+      const maskCanvas = MaskRenderer.createMaskCanvas(
+        layer.mask.path,
+        scaledWidth,
+        scaledHeight,
+        layer.mask.feather * scale
+      );
+
+      // Create temporary canvas for masked image
+      const tempCanvas = document.createElement("canvas");
+      const tempCtx = tempCanvas.getContext("2d")!;
+      tempCanvas.width = scaledWidth;
+      tempCanvas.height = scaledHeight;
+
+      // Draw image to temp canvas
+      tempCtx.drawImage(img, 0, 0, scaledWidth, scaledHeight);
+
+      // Apply mask
+      tempCtx.globalCompositeOperation = "destination-in";
+      tempCtx.drawImage(maskCanvas, 0, 0, scaledWidth, scaledHeight);
+
+      // Draw masked result centered
+      this.ctx.drawImage(
+        tempCanvas,
+        -scaledWidth / 2,
+        -scaledHeight / 2,
+        scaledWidth,
+        scaledHeight
+      );
+    } else {
+      // Draw the image centered without mask
+      this.ctx.drawImage(
+        img,
+        -scaledWidth / 2,
+        -scaledHeight / 2,
+        scaledWidth,
+        scaledHeight
+      );
+    }
 
     this.ctx.restore();
   }
@@ -172,13 +206,46 @@ export class CanvasRenderer {
           const scaledWidth = img.width * transform.scaleX * exportScale;
           const scaledHeight = img.height * transform.scaleY * exportScale;
 
-          exportCtx.drawImage(
-            img,
-            -scaledWidth / 2,
-            -scaledHeight / 2,
-            scaledWidth,
-            scaledHeight
-          );
+          // Handle masking
+          if (layer.mask.enabled && layer.mask.path.length >= 3) {
+            // Create mask canvas
+            const maskCanvas = MaskRenderer.createMaskCanvas(
+              layer.mask.path,
+              scaledWidth,
+              scaledHeight,
+              layer.mask.feather * exportScale
+            );
+
+            // Create temporary canvas for masked image
+            const tempCanvas = document.createElement("canvas");
+            const tempCtx = tempCanvas.getContext("2d")!;
+            tempCanvas.width = scaledWidth;
+            tempCanvas.height = scaledHeight;
+
+            // Draw image to temp canvas
+            tempCtx.drawImage(img, 0, 0, scaledWidth, scaledHeight);
+
+            // Apply mask
+            tempCtx.globalCompositeOperation = "destination-in";
+            tempCtx.drawImage(maskCanvas, 0, 0, scaledWidth, scaledHeight);
+
+            // Draw masked result
+            exportCtx.drawImage(
+              tempCanvas,
+              -scaledWidth / 2,
+              -scaledHeight / 2,
+              scaledWidth,
+              scaledHeight
+            );
+          } else {
+            exportCtx.drawImage(
+              img,
+              -scaledWidth / 2,
+              -scaledHeight / 2,
+              scaledWidth,
+              scaledHeight
+            );
+          }
 
           exportCtx.restore();
         }

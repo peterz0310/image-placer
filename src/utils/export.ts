@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { Project } from "@/types";
+import { MaskRenderer } from "./mask";
 
 export interface ExportOptions {
   includeOriginalAssets: boolean;
@@ -47,13 +48,41 @@ export class ProjectExporter {
         assetsFolder!.file(project.base.name, baseBlob);
       }
 
-      // Add layer images
+      // Add layer images and masks
       for (const layer of project.layers) {
         if (layer.originalFile) {
           assetsFolder!.file(layer.name, layer.originalFile);
         } else if (layer.imageData) {
           const layerBlob = this.dataURLToBlob(layer.imageData);
           assetsFolder!.file(layer.name, layerBlob);
+        }
+
+        // Export mask if enabled
+        if (layer.mask.enabled && layer.mask.path.length >= 3) {
+          try {
+            const maskCanvas = MaskRenderer.createMaskCanvas(
+              layer.mask.path,
+              project.base.width,
+              project.base.height,
+              layer.mask.feather
+            );
+
+            const maskBlob = await new Promise<Blob>((resolve, reject) => {
+              maskCanvas.toBlob((blob) => {
+                if (blob) resolve(blob);
+                else reject(new Error("Failed to create mask blob"));
+              }, "image/png");
+            });
+
+            const maskFileName =
+              layer.name.replace(/\.[^/.]+$/, "") + "_mask.png";
+            assetsFolder!.file(maskFileName, maskBlob);
+          } catch (error) {
+            console.warn(
+              `Failed to export mask for layer ${layer.name}:`,
+              error
+            );
+          }
         }
       }
     }
@@ -168,13 +197,47 @@ export async function renderComposite(
         const scaledHeight =
           img.height * layer.transform.scaleY * scaleAdjustment;
 
-        ctx.drawImage(
-          img,
-          -scaledWidth / 2,
-          -scaledHeight / 2,
-          scaledWidth,
-          scaledHeight
-        );
+        // Handle masking
+        if (layer.mask.enabled && layer.mask.path.length >= 3) {
+          // Create mask canvas
+          const maskCanvas = MaskRenderer.createMaskCanvas(
+            layer.mask.path,
+            scaledWidth,
+            scaledHeight,
+            layer.mask.feather * scale
+          );
+
+          // Create temporary canvas for masked image
+          const tempCanvas = document.createElement("canvas");
+          const tempCtx = tempCanvas.getContext("2d")!;
+          tempCanvas.width = scaledWidth;
+          tempCanvas.height = scaledHeight;
+
+          // Draw image to temp canvas
+          tempCtx.drawImage(img, 0, 0, scaledWidth, scaledHeight);
+
+          // Apply mask
+          tempCtx.globalCompositeOperation = "destination-in";
+          tempCtx.drawImage(maskCanvas, 0, 0, scaledWidth, scaledHeight);
+
+          // Draw masked result
+          ctx.drawImage(
+            tempCanvas,
+            -scaledWidth / 2,
+            -scaledHeight / 2,
+            scaledWidth,
+            scaledHeight
+          );
+        } else {
+          // Draw without mask
+          ctx.drawImage(
+            img,
+            -scaledWidth / 2,
+            -scaledHeight / 2,
+            scaledWidth,
+            scaledHeight
+          );
+        }
 
         ctx.restore();
       }
