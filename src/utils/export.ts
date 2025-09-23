@@ -21,6 +21,23 @@ export class ProjectExporter {
     });
   }
 
+  /**
+   * Exports a project as a ZIP file containing the composite image, project JSON,
+   * and optionally original assets with individual and combined masks
+   *
+   * @param project - The project to export
+   * @param compositeBlob - The rendered composite image blob
+   * @param options - Export options including asset inclusion and format settings
+   * @returns Promise resolving to a ZIP file blob
+   *
+   * The ZIP file will contain:
+   * - project.json: Project data without binary image data
+   * - composite.{format}: The rendered composite image
+   * - assets/ folder (if includeOriginalAssets is true):
+   *   - Original base and layer image files
+   *   - {layerName}_mask.png: Individual mask files for each masked layer
+   *   - combined_mask.png: All masks combined into a single file
+   */
   static async exportZIP(
     project: Project,
     compositeBlob: Blob,
@@ -46,16 +63,42 @@ export class ProjectExporter {
 
       // Add base image
       if (project.base.originalFile) {
-        assetsFolder!.file(project.base.name, project.base.originalFile);
+        try {
+          // Convert File to Blob using FileReader for better compatibility
+          const baseBlob = await this.fileToBlob(project.base.originalFile);
+          assetsFolder!.file(project.base.name, baseBlob);
+        } catch (error) {
+          console.warn(
+            `Failed to process base image file: ${error}. Falling back to imageData.`
+          );
+          if (project.base.imageData) {
+            const baseBlob = this.dataURLToBlob(project.base.imageData);
+            assetsFolder!.file(project.base.name, baseBlob);
+          }
+        }
       } else if (project.base.imageData) {
         const baseBlob = this.dataURLToBlob(project.base.imageData);
         assetsFolder!.file(project.base.name, baseBlob);
       }
 
       // Add layer images and masks
+      const maskCanvases: HTMLCanvasElement[] = [];
+
       for (const layer of project.layers) {
         if (layer.originalFile) {
-          assetsFolder!.file(layer.name, layer.originalFile);
+          try {
+            // Convert File to Blob using FileReader for better compatibility
+            const layerBlob = await this.fileToBlob(layer.originalFile);
+            assetsFolder!.file(layer.name, layerBlob);
+          } catch (error) {
+            console.warn(
+              `Failed to process layer file ${layer.name}: ${error}. Falling back to imageData.`
+            );
+            if (layer.imageData) {
+              const layerBlob = this.dataURLToBlob(layer.imageData);
+              assetsFolder!.file(layer.name, layerBlob);
+            }
+          }
         } else if (layer.imageData) {
           const layerBlob = this.dataURLToBlob(layer.imageData);
           assetsFolder!.file(layer.name, layerBlob);
@@ -70,6 +113,9 @@ export class ProjectExporter {
               project.base.height,
               layer.mask.feather
             );
+
+            // Store mask canvas for combined mask creation
+            maskCanvases.push(maskCanvas);
 
             const maskBlob = await new Promise<Blob>((resolve, reject) => {
               maskCanvas.toBlob((blob) => {
@@ -87,6 +133,20 @@ export class ProjectExporter {
               error
             );
           }
+        }
+      }
+
+      // Create combined mask if there are any masks
+      if (maskCanvases.length > 0) {
+        try {
+          const combinedMaskBlob = await this.createCombinedMask(
+            maskCanvases,
+            project.base.width,
+            project.base.height
+          );
+          assetsFolder!.file("combined_mask.png", combinedMaskBlob);
+        } catch (error) {
+          console.warn("Failed to create combined mask:", error);
         }
       }
     }
@@ -122,6 +182,92 @@ export class ProjectExporter {
     }
 
     return new Blob([u8arr], { type: mime });
+  }
+
+  /**
+   * Converts a File object to a Blob using FileReader for better compatibility
+   * @param file - File object to convert
+   * @returns Promise resolving to a Blob
+   */
+  private static fileToBlob(file: File): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      // Check if the file is actually a File/Blob object
+      if (!file) {
+        reject(new Error("File is null or undefined"));
+        return;
+      }
+
+      // Type check for File/Blob
+      const isFile =
+        typeof file === "object" && "type" in file && "size" in file;
+      if (!isFile) {
+        reject(new Error("Invalid file object - not a File or Blob"));
+        return;
+      }
+
+      // If it's already a proper Blob (but not File), just return it
+      if (file instanceof Blob && !(file instanceof File)) {
+        resolve(file);
+        return;
+      }
+
+      const reader = new FileReader();
+
+      reader.onload = (event) => {
+        if (event.target?.result instanceof ArrayBuffer) {
+          const blob = new Blob([event.target.result], { type: file.type });
+          resolve(blob);
+        } else {
+          reject(new Error("Failed to read file as ArrayBuffer"));
+        }
+      };
+
+      reader.onerror = () => {
+        reject(new Error("FileReader error"));
+      };
+
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  /**
+   * Creates a combined mask from multiple mask canvases
+   * @param maskCanvases - Array of mask canvases to combine
+   * @param width - Width of the combined mask
+   * @param height - Height of the combined mask
+   * @returns Promise resolving to a Blob containing the combined mask
+   */
+  private static async createCombinedMask(
+    maskCanvases: HTMLCanvasElement[],
+    width: number,
+    height: number
+  ): Promise<Blob> {
+    const combinedCanvas = document.createElement("canvas");
+    const ctx = combinedCanvas.getContext("2d")!;
+
+    combinedCanvas.width = width;
+    combinedCanvas.height = height;
+
+    // Start with black background (no mask)
+    ctx.fillStyle = "black";
+    ctx.fillRect(0, 0, width, height);
+
+    // Use additive blending to combine masks
+    ctx.globalCompositeOperation = "screen"; // White + White = White, Black + White = White
+
+    for (const maskCanvas of maskCanvases) {
+      ctx.drawImage(maskCanvas, 0, 0, width, height);
+    }
+
+    return new Promise<Blob>((resolve, reject) => {
+      combinedCanvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error("Failed to create combined mask blob"));
+        }
+      }, "image/png");
+    });
   }
 
   static downloadBlob(blob: Blob, filename: string) {
