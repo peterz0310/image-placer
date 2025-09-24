@@ -342,14 +342,23 @@ export async function renderComposite(
           );
         }
 
-        // The stored transform.scaleX/Y values are from FabricJS on the display-scaled canvas
-        // To render at export resolution, we need to scale them appropriately
-        // If displayScale is 0.4 and exportScale is 1.0, we need to scale up by 2.5x
-        const scaleAdjustment = scale / displayScale;
-        const scaledWidth =
-          img.width * layer.transform.scaleX * scaleAdjustment;
-        const scaledHeight =
-          img.height * layer.transform.scaleY * scaleAdjustment;
+        // Use normalized scale values if available, otherwise fall back to legacy method
+        let scaledWidth: number;
+        let scaledHeight: number;
+
+        if (
+          layer.transform.normalizedScaleX &&
+          layer.transform.normalizedScaleY
+        ) {
+          // NEW: Use normalized scale values (base image relative)
+          scaledWidth = canvas.width * layer.transform.normalizedScaleX;
+          scaledHeight = canvas.height * layer.transform.normalizedScaleY;
+        } else {
+          // LEGACY: Fall back to old method for backward compatibility
+          const scaleAdjustment = scale / displayScale;
+          scaledWidth = img.width * layer.transform.scaleX * scaleAdjustment;
+          scaledHeight = img.height * layer.transform.scaleY * scaleAdjustment;
+        }
 
         // Handle masking
         if (layer.mask.enabled && layer.mask.path.length >= 3) {

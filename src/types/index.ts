@@ -6,11 +6,10 @@ export interface Transform {
   angle: number;
   skewX?: number;
   skewY?: number;
-}
-
-export interface QuadWarp {
-  enabled: boolean;
-  points: [number, number][];
+  // Normalized scale values relative to base image dimensions
+  // These ensure consistent visual scaling regardless of overlay image size
+  normalizedScaleX?: number; // Rendered width as fraction of base image width
+  normalizedScaleY?: number; // Rendered height as fraction of base image height
 }
 
 export interface Mask {
@@ -23,8 +22,8 @@ export interface Mask {
 export interface Layer {
   id: string;
   name: string;
+  tag?: string;
   transform: Transform;
-  quad: QuadWarp;
   mask: Mask;
   opacity: number;
   visible: boolean;

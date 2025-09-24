@@ -454,22 +454,76 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         if (!obj) return;
 
         const layerId = objectLayerMapRef.current.get(obj);
-        if (!layerId) return;
+        if (!layerId || !project) return;
 
-        // Convert Fabric.js coordinates back to normalized coordinates
-        const normalizedTransform = {
-          left: (obj.left || 0) / canvas.width,
-          top: (obj.top || 0) / canvas.height,
-          scaleX: obj.scaleX || 1,
-          scaleY: obj.scaleY || 1,
-          angle: obj.angle || 0,
-          skewX: obj.skewX || 0,
-          skewY: obj.skewY || 0,
+        // Find the layer to get original image dimensions
+        const layer = project.layers.find((l) => l.id === layerId);
+        if (!layer) return;
+
+        // Calculate normalized scale values
+        const calculateNormalizedScale = async () => {
+          if (!layer.imageData) return;
+
+          try {
+            const img = await loadImageFromDataURL(layer.imageData);
+
+            // Match the legacy calculation exactly
+            // Legacy: scaledWidth = img.width * scaleX * (exportScale / displayScale)
+            // We want: canvas.width * normalizedScaleX = img.width * scaleX * (exportScale / displayScale)
+            // At export: canvas.width = project.base.width * exportScale
+            // So: project.base.width * exportScale * normalizedScaleX = img.width * scaleX * (exportScale / displayScale)
+            // Therefore: normalizedScaleX = (img.width * scaleX) / (project.base.width * displayScale)
+
+            const maxWidth = 800;
+            const maxHeight = 600;
+            const displayScale = Math.min(
+              maxWidth / project.base.width,
+              maxHeight / project.base.height,
+              1
+            );
+
+            const normalizedScaleX =
+              (img.width * (obj.scaleX || 1)) /
+              (project.base.width * displayScale);
+            const normalizedScaleY =
+              (img.height * (obj.scaleY || 1)) /
+              (project.base.height * displayScale);
+
+            const normalizedTransform = {
+              left: (obj.left || 0) / canvas.width,
+              top: (obj.top || 0) / canvas.height,
+              scaleX: obj.scaleX || 1,
+              scaleY: obj.scaleY || 1,
+              angle: obj.angle || 0,
+              skewX: obj.skewX || 0,
+              skewY: obj.skewY || 0,
+              normalizedScaleX,
+              normalizedScaleY,
+            };
+
+            onLayerUpdate(layerId, {
+              transform: normalizedTransform,
+            });
+          } catch (error) {
+            console.warn("Failed to calculate normalized scale:", error);
+            // Fallback to old behavior
+            const normalizedTransform = {
+              left: (obj.left || 0) / canvas.width,
+              top: (obj.top || 0) / canvas.height,
+              scaleX: obj.scaleX || 1,
+              scaleY: obj.scaleY || 1,
+              angle: obj.angle || 0,
+              skewX: obj.skewX || 0,
+              skewY: obj.skewY || 0,
+            };
+
+            onLayerUpdate(layerId, {
+              transform: normalizedTransform,
+            });
+          }
         };
 
-        onLayerUpdate(layerId, {
-          transform: normalizedTransform,
-        });
+        calculateNormalizedScale();
       });
 
       // Add additional debugging events for skew mode

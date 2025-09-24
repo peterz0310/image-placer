@@ -10,9 +10,11 @@ Image Placer enables users to create professional product mockups by:
 - Adding multiple overlay images with precise positioning and transformations
 - Creating custom vector masks for precise image shaping
 - Applying blend modes and opacity controls for realistic compositing
+- Tagging layers for specialized workflows (nail positions, design elements)
 - Exporting complete project packages with all assets and settings preserved
+- Creating portable templates that work across different image sizes
 
-Perfect for creating nail design mockups, product packaging visualizations, screen mockups, apparel designs, and more.
+Perfect for creating nail design mockups, product packaging visualizations, screen mockups, apparel designs, and more. Specialized features for nail design apps include layer tagging for position mapping and normalized scaling for template portability.
 
 ## Key Features
 
@@ -25,6 +27,7 @@ Perfect for creating nail design mockups, product packaging visualizations, scre
 - **Precise Controls**: Move, scale, rotate, and skew overlays with visual handles and numeric inputs
 - **Layer Management**: Full layer stack with reordering, visibility, and lock controls
 - **Mask Drawing**: Create custom polygon masks with real-time preview and feathering
+- **Layer Tagging**: Tag layers with custom names for specialized workflows (e.g., "left_pinky", "design_element")
 
 #### **Professional Features**
 
@@ -32,6 +35,8 @@ Perfect for creating nail design mockups, product packaging visualizations, scre
 - **Opacity Control**: Per-layer opacity with smooth transitions
 - **Layer Locking**: Prevent accidental modifications to finalized layers
 - **Resolution Independence**: All transforms stored in normalized coordinates
+- **Template Portability**: Normalized scaling ensures designs work across different base image sizes
+- **Legacy Compatibility**: Automatic migration of old projects to new scaling system
 
 #### **Project Management**
 
@@ -74,7 +79,7 @@ Perfect for creating nail design mockups, product packaging visualizations, scre
 
 ### **Data Model**
 
-Projects use a JSON structure with normalized coordinates (0-1 range) relative to base image dimensions, ensuring resolution independence:
+Projects use a JSON structure with normalized coordinates (0-1 range) relative to base image dimensions, ensuring resolution independence and template portability:
 
 ```json
 {
@@ -93,6 +98,7 @@ Projects use a JSON structure with normalized coordinates (0-1 range) relative t
     {
       "id": "uuid-string",
       "name": "nail-design.png",
+      "tag": "left_pinky",
       "transform": {
         "left": 0.5,
         "top": 0.5,
@@ -100,7 +106,9 @@ Projects use a JSON structure with normalized coordinates (0-1 range) relative t
         "scaleY": 0.25,
         "angle": 15.0,
         "skewX": 0,
-        "skewY": 0
+        "skewY": 0,
+        "normalizedScaleX": 0.15,
+        "normalizedScaleY": 0.12
       },
       "mask": {
         "enabled": true,
@@ -121,6 +129,13 @@ Projects use a JSON structure with normalized coordinates (0-1 range) relative t
   ]
 }
 ```
+
+#### **Key Features of the Data Model:**
+
+- **Layer Tags**: Optional `tag` field for workflow-specific layer identification
+- **Dual Scaling System**: Both legacy (`scaleX`/`scaleY`) and normalized scale values for backward compatibility
+- **Normalized Scaling**: `normalizedScaleX`/`normalizedScaleY` represent rendered size as fraction of base image dimensions
+- **Template Portability**: Normalized values ensure consistent visual appearance across different overlay image sizes
 
 ## Getting Started
 
@@ -159,11 +174,13 @@ Projects use a JSON structure with normalized coordinates (0-1 range) relative t
    - Use interactive canvas handles for visual editing
    - Use the properties panel for precise numeric control
    - Create masks by switching to Mask mode and drawing polygons
+   - Add optional tags to layers for workflow organization
 4. **Manage Layers**:
    - Toggle visibility with the eye icon
    - Lock layers to prevent changes
    - Adjust opacity and blend modes
    - Reorder layers by dragging
+   - Add descriptive tags for specialized workflows
 5. **Export Your Work**:
    - Click "Export ZIP" to save a complete project package
    - The ZIP contains original assets, composite render, and project JSON
@@ -183,6 +200,17 @@ Each layer supports:
 - **Appearance**: Opacity (0-100%) and blend mode selection
 - **Mask**: Custom polygon shapes with adjustable feathering
 - **Management**: Visibility toggle, lock protection, and layer ordering
+- **Tagging**: Optional custom tags for workflow-specific identification
+- **Scaling**: Both legacy and normalized scale values for template portability
+
+### **Specialized Workflows**
+
+#### **Nail Design Templates**
+
+- **Layer Tagging**: Tag layers with nail positions (e.g., "left_pinky", "right_thumb")
+- **Template Portability**: Create designs that work across different hand model images
+- **JSON Export**: Exports include both display names and workflow tags
+- **Scale Independence**: Normalized scaling ensures consistent appearance regardless of overlay image dimensions
 
 ## Project Structure
 
@@ -208,6 +236,8 @@ src/
 - **Efficient Storage**: Projects store only essential data with asset references
 - **Smooth Interactions**: Debounced updates and optimized event handling
 - **Scalable Architecture**: Component-based design for easy feature additions
+- **Legacy Migration**: Automatic upgrade of old projects to new scaling system
+- **Template Optimization**: Normalized scaling calculations cached for performance
 
 ## Browser Support
 

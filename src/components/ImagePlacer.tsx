@@ -60,6 +60,21 @@ export default function ImagePlacer() {
     }
   }, [historyProject]);
 
+  // Sync tagInputs when project changes (for loading projects, undo/redo, etc.)
+  useEffect(() => {
+    if (project?.layers) {
+      const newTagInputs: Record<string, string> = {};
+      project.layers.forEach((layer) => {
+        if (layer.tag) {
+          newTagInputs[layer.id] = layer.tag;
+        }
+      });
+      setTagInputs(newTagInputs);
+    } else {
+      setTagInputs({});
+    }
+  }, [project?.layers]);
+
   const [canvasState, setCanvasState] = useState<CanvasState>({
     zoom: 1,
     pan: { x: 0, y: 0 },
@@ -75,8 +90,73 @@ export default function ImagePlacer() {
   const [error, setError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
+  // Local state for tag inputs to avoid performance issues
+  const [tagInputs, setTagInputs] = useState<Record<string, string>>({});
+
+  // Refs for debouncing tag updates
+  const tagUpdateTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
+
   // Enable keyboard shortcuts for undo/redo
   useHistoryKeyboard(undo, redo, canUndo, canRedo);
+
+  /**
+   * Migrates legacy projects to include normalized scale values
+   */
+  const migrateProjectToNormalizedScale = useCallback(
+    async (project: Project): Promise<Project> => {
+      const migratedLayers = await Promise.all(
+        project.layers.map(async (layer) => {
+          // Skip if already has normalized scale values
+          if (
+            layer.transform.normalizedScaleX &&
+            layer.transform.normalizedScaleY
+          ) {
+            return layer;
+          }
+
+          // Calculate normalized scale values for legacy layers
+          if (layer.imageData) {
+            try {
+              const img = await new Promise<HTMLImageElement>(
+                (resolve, reject) => {
+                  const image = new Image();
+                  image.onload = () => resolve(image);
+                  image.onerror = reject;
+                  image.src = layer.imageData!;
+                }
+              );
+
+              const renderedWidth = img.width * layer.transform.scaleX;
+              const renderedHeight = img.height * layer.transform.scaleY;
+
+              const normalizedScaleX = renderedWidth / project.base.width;
+              const normalizedScaleY = renderedHeight / project.base.height;
+
+              return {
+                ...layer,
+                transform: {
+                  ...layer.transform,
+                  normalizedScaleX,
+                  normalizedScaleY,
+                },
+              };
+            } catch (error) {
+              console.warn(`Failed to migrate layer ${layer.name}:`, error);
+              return layer; // Return unchanged if migration fails
+            }
+          }
+
+          return layer;
+        })
+      );
+
+      return {
+        ...project,
+        layers: migratedLayers,
+      };
+    },
+    []
+  );
 
   /**
    * Updates project state and saves to history
@@ -95,6 +175,36 @@ export default function ImagePlacer() {
     [project, saveState]
   );
 
+  /**
+   * Debounced function to update layer tags without triggering canvas re-renders on every keystroke
+   */
+  const debouncedTagUpdate = useCallback(
+    (layerId: string, tag: string | undefined) => {
+      // Clear any existing timeout for this layer
+      if (tagUpdateTimeouts.current[layerId]) {
+        clearTimeout(tagUpdateTimeouts.current[layerId]);
+      }
+
+      // Set a new timeout
+      tagUpdateTimeouts.current[layerId] = setTimeout(() => {
+        updateProject((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            layers: prev.layers.map((l) =>
+              l.id === layerId ? { ...l, tag } : l
+            ),
+            metadata: {
+              ...prev.metadata!,
+              modified: new Date().toISOString(),
+            },
+          };
+        }, `Update tag: ${project?.layers.find((l) => l.id === layerId)?.name || "Unknown"}`);
+      }, 500); // 500ms debounce
+    },
+    [updateProject, project]
+  );
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const overlayInputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
@@ -108,6 +218,12 @@ export default function ImagePlacer() {
         URL.revokeObjectURL(url);
       });
       objectURLsRef.current.clear();
+
+      // Clear any pending tag update timeouts
+      Object.values(tagUpdateTimeouts.current).forEach((timeout) => {
+        clearTimeout(timeout);
+      });
+      tagUpdateTimeouts.current = {};
     };
   }, []);
 
@@ -263,82 +379,108 @@ export default function ImagePlacer() {
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      // Generate unique name if duplicate exists
-      const generateUniqueName = (
-        baseName: string,
-        existingLayers: Layer[]
-      ): string => {
-        const existingNames = existingLayers.map((layer) => layer.name);
-        if (!existingNames.includes(baseName)) {
-          return baseName;
-        }
+      // Load the image to get its dimensions
+      const img = new Image();
+      img.onload = () => {
+        // Generate unique name if duplicate exists
+        const generateUniqueName = (
+          baseName: string,
+          existingLayers: Layer[]
+        ): string => {
+          const existingNames = existingLayers.map((layer) => layer.name);
+          if (!existingNames.includes(baseName)) {
+            return baseName;
+          }
 
-        const nameParts = baseName.split(".");
-        const extension = nameParts.pop();
-        const nameWithoutExt = nameParts.join(".");
+          const nameParts = baseName.split(".");
+          const extension = nameParts.pop();
+          const nameWithoutExt = nameParts.join(".");
 
-        let counter = 1;
-        let uniqueName;
-        do {
-          uniqueName = `${nameWithoutExt} (${counter})${
-            extension ? "." + extension : ""
-          }`;
-          counter++;
-        } while (existingNames.includes(uniqueName));
+          let counter = 1;
+          let uniqueName;
+          do {
+            uniqueName = `${nameWithoutExt} (${counter})${
+              extension ? "." + extension : ""
+            }`;
+            counter++;
+          } while (existingNames.includes(uniqueName));
 
-        return uniqueName;
-      };
+          return uniqueName;
+        };
 
-      const uniqueName = generateUniqueName(file.name, project.layers);
+        const uniqueName = generateUniqueName(file.name, project.layers);
 
-      const newLayer: Layer = {
-        id: uuidv4(),
-        name: uniqueName,
-        transform: {
-          left: 0.5,
-          top: 0.5,
-          scaleX: 0.25,
-          scaleY: 0.25,
-          angle: 0,
-        },
-        quad: {
-          enabled: false,
-          points: [],
-        },
-        mask: {
-          enabled: false,
+        // Calculate normalized scale values
+        // Start with a reasonable default size (25% of overlay image)
+        const initialScaleX = 0.25;
+        const initialScaleY = 0.25;
+
+        // Use the same formula as the canvas update handler
+        const maxDisplayWidth = 800;
+        const maxDisplayHeight = 600;
+        const displayScale = Math.min(
+          maxDisplayWidth / project.base.width,
+          maxDisplayHeight / project.base.height,
+          1
+        );
+
+        const normalizedScaleX =
+          (img.width * initialScaleX) / (project.base.width * displayScale);
+        const normalizedScaleY =
+          (img.height * initialScaleY) / (project.base.height * displayScale);
+
+        const newLayer: Layer = {
+          id: uuidv4(),
+          name: uniqueName,
+          tag: undefined,
+          transform: {
+            left: 0.5,
+            top: 0.5,
+            scaleX: initialScaleX,
+            scaleY: initialScaleY,
+            angle: 0,
+            normalizedScaleX,
+            normalizedScaleY,
+          },
+          mask: {
+            enabled: false,
+            visible: true,
+            path: [],
+            feather: 0,
+          },
+          opacity: 1,
           visible: true,
-          path: [],
-          feather: 0,
-        },
-        opacity: 1,
-        visible: true,
-        locked: false,
-        imageData: e.target?.result as string,
-        originalFile: file,
+          locked: false,
+          imageData: e.target?.result as string,
+          originalFile: file,
+        };
+
+        updateProject(
+          (prev) =>
+            prev
+              ? {
+                  ...prev,
+                  layers: [...prev.layers, newLayer],
+                  metadata: {
+                    ...prev.metadata!,
+                    modified: new Date().toISOString(),
+                  },
+                }
+              : null,
+          `Add layer: ${newLayer.name}`
+        );
+
+        // Switch to transform mode and select the new layer
+        setCanvasState((prev) => ({
+          ...prev,
+          selectedLayerId: newLayer.id,
+          tool: "select",
+        }));
       };
-
-      updateProject(
-        (prev) =>
-          prev
-            ? {
-                ...prev,
-                layers: [...prev.layers, newLayer],
-                metadata: {
-                  ...prev.metadata!,
-                  modified: new Date().toISOString(),
-                },
-              }
-            : null,
-        `Add layer: ${newLayer.name}`
-      );
-
-      // Switch to transform mode and select the new layer
-      setCanvasState((prev) => ({
-        ...prev,
-        selectedLayerId: newLayer.id,
-        tool: "select",
-      }));
+      img.onerror = () => {
+        setError("Failed to load overlay image for processing.");
+      };
+      img.src = e.target?.result as string;
     };
     reader.readAsDataURL(file);
 
@@ -442,13 +584,18 @@ export default function ImagePlacer() {
             }
           }
 
+          // Migrate to normalized scale values
+          const migratedProject = await migrateProjectToNormalizedScale(
+            projectData
+          );
+
           const loadedProject = {
-            ...projectData,
+            ...migratedProject,
             metadata: {
               created:
-                projectData.metadata?.created || new Date().toISOString(),
+                migratedProject.metadata?.created || new Date().toISOString(),
               modified: new Date().toISOString(),
-              author: projectData.metadata?.author,
+              author: migratedProject.metadata?.author,
             },
           };
           setLocalProject(loadedProject);
@@ -476,13 +623,18 @@ export default function ImagePlacer() {
               }
             });
 
+            // Migrate to normalized scale values
+            const migratedProject = await migrateProjectToNormalizedScale(
+              projectData
+            );
+
             const loadedProject = {
-              ...projectData,
+              ...migratedProject,
               metadata: {
                 created:
-                  projectData.metadata?.created || new Date().toISOString(),
+                  migratedProject.metadata?.created || new Date().toISOString(),
                 modified: new Date().toISOString(),
-                author: projectData.metadata?.author,
+                author: migratedProject.metadata?.author,
               },
             };
             setLocalProject(loadedProject);
@@ -948,6 +1100,34 @@ export default function ImagePlacer() {
                           <Trash2 size={14} />
                         </button>
                       </div>
+                    </div>
+
+                    {/* Tag input field */}
+                    <div className="mb-2">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        Tag:
+                      </label>
+                      <input
+                        type="text"
+                        value={tagInputs[layer.id] ?? layer.tag ?? ""}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          const newValue = e.target.value;
+
+                          // Update local state immediately for responsiveness
+                          setTagInputs((prev) => ({
+                            ...prev,
+                            [layer.id]: newValue,
+                          }));
+
+                          // Debounce the actual project update
+                          const trimmedValue = newValue.trim() || undefined;
+                          debouncedTagUpdate(layer.id, trimmedValue);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full text-xs px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder-gray-400 text-gray-900"
+                        placeholder="optional"
+                      />
                     </div>
 
                     {/* Mask Controls */}
