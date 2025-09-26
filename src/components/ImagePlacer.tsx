@@ -447,6 +447,8 @@ export default function ImagePlacer() {
             visible: true,
             path: [],
             feather: 0,
+            smoothing: 0,
+            offset: { x: 0, y: 0 },
           },
           opacity: 1,
           visible: true,
@@ -1241,9 +1243,43 @@ export default function ImagePlacer() {
 
                       {layer.mask.enabled && (
                         <div className="space-y-1">
-                          <label className="block text-xs text-gray-700">
-                            Feather: {layer.mask.feather.toFixed(1)}px
-                          </label>
+                          <div className="flex items-center justify-between">
+                            <label className="block text-xs text-gray-700">
+                              Feather: {layer.mask.feather.toFixed(1)}px
+                            </label>
+                            <div className="flex items-center gap-1">
+                              <button
+                                className="px-2 py-0.5 text-xs bg-gray-200 text-gray-900 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const next = Math.max(
+                                    0,
+                                    layer.mask.feather - 0.5
+                                  );
+                                  handleLayerUpdate(layer.id, {
+                                    mask: { ...layer.mask, feather: next },
+                                  });
+                                }}
+                              >
+                                −
+                              </button>
+                              <button
+                                className="px-2 py-0.5 text-xs bg-gray-200 text-gray-900 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const next = Math.min(
+                                    10,
+                                    layer.mask.feather + 0.5
+                                  );
+                                  handleLayerUpdate(layer.id, {
+                                    mask: { ...layer.mask, feather: next },
+                                  });
+                                }}
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
                           <input
                             type="range"
                             min="0"
@@ -1261,6 +1297,225 @@ export default function ImagePlacer() {
                             }}
                             className="w-full h-1"
                           />
+                          <div className="flex items-center justify-between mt-2">
+                            <label className="block text-xs text-gray-700">
+                              Smoothing:{" "}
+                              {((layer.mask.smoothing ?? 0) * 100).toFixed(0)}%
+                            </label>
+                            <div className="flex items-center gap-1">
+                              <button
+                                className="px-2 py-0.5 text-xs bg-gray-200 text-gray-900 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const cur = layer.mask.smoothing ?? 0;
+                                  const next = Math.max(
+                                    0,
+                                    +(cur - 0.05).toFixed(2)
+                                  );
+                                  handleLayerUpdate(layer.id, {
+                                    mask: { ...layer.mask, smoothing: next },
+                                  });
+                                }}
+                              >
+                                −
+                              </button>
+                              <button
+                                className="px-2 py-0.5 text-xs bg-gray-200 text-gray-900 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const cur = layer.mask.smoothing ?? 0;
+                                  const next = Math.min(
+                                    1,
+                                    +(cur + 0.05).toFixed(2)
+                                  );
+                                  handleLayerUpdate(layer.id, {
+                                    mask: { ...layer.mask, smoothing: next },
+                                  });
+                                }}
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={layer.mask.smoothing ?? 0}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleLayerUpdate(layer.id, {
+                                mask: {
+                                  ...layer.mask,
+                                  smoothing: parseFloat(e.target.value),
+                                },
+                              });
+                            }}
+                            className="w-full h-1"
+                          />
+                          <div className="grid grid-cols-2 gap-2 mt-2">
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <label className="block text-xs text-gray-700">
+                                  Offset X:{" "}
+                                  {Math.round(
+                                    (layer.mask.offset?.x ?? 0) * 100
+                                  )}
+                                  %
+                                </label>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    className="px-2 py-0.5 text-xs bg-gray-200 text-gray-900 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const x = Math.max(
+                                        -0.5,
+                                        +(
+                                          (layer.mask.offset?.x ?? 0) - 0.01
+                                        ).toFixed(3)
+                                      );
+                                      handleLayerUpdate(layer.id, {
+                                        mask: {
+                                          ...layer.mask,
+                                          offset: {
+                                            x,
+                                            y: layer.mask.offset?.y ?? 0,
+                                          },
+                                        },
+                                      });
+                                    }}
+                                  >
+                                    −
+                                  </button>
+                                  <button
+                                    className="px-2 py-0.5 text-xs bg-gray-200 text-gray-900 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const x = Math.min(
+                                        0.5,
+                                        +(
+                                          (layer.mask.offset?.x ?? 0) + 0.01
+                                        ).toFixed(3)
+                                      );
+                                      handleLayerUpdate(layer.id, {
+                                        mask: {
+                                          ...layer.mask,
+                                          offset: {
+                                            x,
+                                            y: layer.mask.offset?.y ?? 0,
+                                          },
+                                        },
+                                      });
+                                    }}
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+                              <input
+                                type="range"
+                                min={-0.5}
+                                max={0.5}
+                                step={0.01}
+                                value={layer.mask.offset?.x ?? 0}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  const x = parseFloat(e.target.value);
+                                  handleLayerUpdate(layer.id, {
+                                    mask: {
+                                      ...layer.mask,
+                                      offset: {
+                                        x,
+                                        y: layer.mask.offset?.y ?? 0,
+                                      },
+                                    },
+                                  });
+                                }}
+                                className="w-full h-1"
+                              />
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <label className="block text-xs text-gray-700">
+                                  Offset Y:{" "}
+                                  {Math.round(
+                                    (layer.mask.offset?.y ?? 0) * 100
+                                  )}
+                                  %
+                                </label>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    className="px-2 py-0.5 text-xs bg-gray-200 text-gray-900 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const y = Math.max(
+                                        -0.5,
+                                        +(
+                                          (layer.mask.offset?.y ?? 0) - 0.01
+                                        ).toFixed(3)
+                                      );
+                                      handleLayerUpdate(layer.id, {
+                                        mask: {
+                                          ...layer.mask,
+                                          offset: {
+                                            x: layer.mask.offset?.x ?? 0,
+                                            y,
+                                          },
+                                        },
+                                      });
+                                    }}
+                                  >
+                                    −
+                                  </button>
+                                  <button
+                                    className="px-2 py-0.5 text-xs bg-gray-200 text-gray-900 rounded hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const y = Math.min(
+                                        0.5,
+                                        +(
+                                          (layer.mask.offset?.y ?? 0) + 0.01
+                                        ).toFixed(3)
+                                      );
+                                      handleLayerUpdate(layer.id, {
+                                        mask: {
+                                          ...layer.mask,
+                                          offset: {
+                                            x: layer.mask.offset?.x ?? 0,
+                                            y,
+                                          },
+                                        },
+                                      });
+                                    }}
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+                              <input
+                                type="range"
+                                min={-0.5}
+                                max={0.5}
+                                step={0.01}
+                                value={layer.mask.offset?.y ?? 0}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  const y = parseFloat(e.target.value);
+                                  handleLayerUpdate(layer.id, {
+                                    mask: {
+                                      ...layer.mask,
+                                      offset: {
+                                        x: layer.mask.offset?.x ?? 0,
+                                        y,
+                                      },
+                                    },
+                                  });
+                                }}
+                                className="w-full h-1"
+                              />
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>

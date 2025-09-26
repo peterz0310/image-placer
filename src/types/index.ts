@@ -17,6 +17,10 @@ export interface Mask {
   visible: boolean;
   path: [number, number][];
   feather: number;
+  // 0-1 smoothing strength applied to mask polygon (Catmull-Rom spline)
+  smoothing?: number;
+  // Normalized offset (0..1 of base width/height); positive x moves right, positive y moves down
+  offset?: { x: number; y: number };
 }
 
 export interface Layer {

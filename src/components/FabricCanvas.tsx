@@ -7,8 +7,10 @@ import {
   FabricObject,
   Polygon,
   Circle,
+  Path,
 } from "fabric";
 import { Project, Layer, CanvasState } from "@/types";
+import { MaskRenderer } from "@/utils/mask";
 
 interface FabricCanvasProps {
   project: Project | null;
@@ -404,6 +406,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             visible: true,
             path: normalizedPoints,
             feather: 2.0,
+            smoothing: 0.4,
+            offset: { x: 0, y: 0 },
           },
         });
 
@@ -444,6 +448,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         width: 800,
         height: 600,
         backgroundColor: "#f0f0f0",
+        enableRetinaScaling: false,
       });
 
       fabricCanvasRef.current = canvas;
@@ -742,6 +747,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           visible: true,
           path: normalizedPoints,
           feather: 2.0,
+          smoothing: 0.4,
+          offset: { x: 0, y: 0 },
         },
       });
 
@@ -1088,23 +1095,80 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           layer.mask.visible &&
           layer.mask.path.length > 0
         ) {
-          const maskPoints = layer.mask.path.map((point) => ({
-            x: point[0] * canvas.width,
-            y: point[1] * canvas.height,
-          }));
+          const offX = (layer.mask.offset?.x ?? 0) * canvas.width;
+          const offY = (layer.mask.offset?.y ?? 0) * canvas.height;
+          const absPoints = layer.mask.path.map((point) => [
+            point[0] * canvas.width + offX,
+            point[1] * canvas.height + offY,
+          ]);
 
-          const maskPolygon = new Polygon(maskPoints, {
-            fill: "rgba(0, 255, 0, 0.2)",
-            stroke: "#00ff00",
-            strokeWidth: 1,
-            strokeDashArray: [5, 5],
-            selectable: false,
-            evented: false,
+          const smoothing = layer.mask.smoothing ?? 0;
+          let maskShape: FabricObject;
+          if (smoothing > 0 && absPoints.length >= 3) {
+            const d = MaskRenderer.toSmoothedClosedPathD(
+              absPoints as number[][],
+              smoothing
+            );
+            // Use Path for smoothed preview
+            const path = new Path(d, {
+              fill: "rgba(0, 255, 0, 0.2)",
+              stroke: "#00ff00",
+              strokeWidth: 1,
+              // solid stroke for performance
+              selectable: !layer.locked,
+              evented: !layer.locked,
+            });
+            maskShape = path as FabricObject;
+          } else {
+            const maskPoints = absPoints.map(([x, y]) => ({ x, y }));
+            maskShape = new Polygon(maskPoints as any, {
+              fill: "rgba(0, 255, 0, 0.2)",
+              stroke: "#00ff00",
+              strokeWidth: 1,
+              // solid stroke for performance
+              selectable: !layer.locked,
+              evented: !layer.locked,
+            }) as unknown as FabricObject;
+          }
+
+          // Store reference to mask overlay for this layer
+          (fabricImg as any)._maskPolygon = maskShape;
+          // Make the overlay draggable to adjust offset
+          maskShape.hasBorders = true;
+          maskShape.hasControls = false; // no scaling/rotate controls
+          maskShape.lockScalingX = true;
+          maskShape.lockScalingY = true;
+          maskShape.lockRotation = true;
+          maskShape.objectCaching = true; // cache for smoother dragging
+          maskShape.borderScaleFactor = 0.5;
+          maskShape.hoverCursor = !layer.locked ? "move" : "not-allowed";
+          // Ensure movement is pixel-snapped for smoothness
+          maskShape.on("moving", () => {
+            const snappedLeft = Math.round(maskShape.left || 0);
+            const snappedTop = Math.round(maskShape.top || 0);
+            if (
+              snappedLeft !== maskShape.left ||
+              snappedTop !== maskShape.top
+            ) {
+              maskShape.set({ left: snappedLeft, top: snappedTop });
+            }
           });
-
-          // Store reference to mask polygon for this layer
-          (fabricImg as any)._maskPolygon = maskPolygon;
-          canvas.add(maskPolygon);
+          canvas.add(maskShape);
+          // Commit offset only when drag ends to avoid choppy rerenders
+          maskShape.on("modified", () => {
+            const dx = Math.round(maskShape.left || 0);
+            const dy = Math.round(maskShape.top || 0);
+            const normDx = dx / canvas.width;
+            const normDy = dy / canvas.height;
+            const prev = layer.mask.offset ?? { x: 0, y: 0 };
+            const next = { x: prev.x + normDx, y: prev.y + normDy };
+            onLayerUpdate(objectLayerMapRef.current.get(fabricImg)!, {
+              mask: { ...layer.mask, offset: next },
+            });
+            // Reset shape position back to anchored points and rely on re-render
+            maskShape.set({ left: 0, top: 0 });
+            canvas.requestRenderAll();
+          });
         }
 
         canvas.renderAll();
@@ -1158,22 +1222,74 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           layer.mask.visible &&
           layer.mask.path.length > 0
         ) {
-          const maskPoints = layer.mask.path.map((point) => ({
-            x: point[0] * canvas.width,
-            y: point[1] * canvas.height,
-          }));
+          const offX = (layer.mask.offset?.x ?? 0) * canvas.width;
+          const offY = (layer.mask.offset?.y ?? 0) * canvas.height;
+          const absPoints = layer.mask.path.map((point) => [
+            point[0] * canvas.width + offX,
+            point[1] * canvas.height + offY,
+          ]);
 
-          const maskPolygon = new Polygon(maskPoints, {
-            fill: "rgba(0, 255, 0, 0.2)",
-            stroke: "#00ff00",
-            strokeWidth: 1,
-            strokeDashArray: [5, 5],
-            selectable: false,
-            evented: false,
+          const smoothing = layer.mask.smoothing ?? 0;
+          let maskShape: FabricObject;
+          if (smoothing > 0 && absPoints.length >= 3) {
+            const d = MaskRenderer.toSmoothedClosedPathD(
+              absPoints as number[][],
+              smoothing
+            );
+            const path = new Path(d, {
+              fill: "rgba(0, 255, 0, 0.2)",
+              stroke: "#00ff00",
+              strokeWidth: 1,
+              // solid stroke for performance
+              selectable: !layer.locked,
+              evented: !layer.locked,
+            });
+            maskShape = path as FabricObject;
+          } else {
+            const maskPoints = absPoints.map(([x, y]) => ({ x, y }));
+            maskShape = new Polygon(maskPoints as any, {
+              fill: "rgba(0, 255, 0, 0.2)",
+              stroke: "#00ff00",
+              strokeWidth: 1,
+              // solid stroke for performance
+              selectable: !layer.locked,
+              evented: !layer.locked,
+            }) as unknown as FabricObject;
+          }
+
+          (fabricObj as any)._maskPolygon = maskShape;
+          maskShape.hasBorders = true;
+          maskShape.hasControls = false;
+          maskShape.lockScalingX = true;
+          maskShape.lockScalingY = true;
+          maskShape.lockRotation = true;
+          maskShape.objectCaching = true;
+          maskShape.borderScaleFactor = 0.5;
+          maskShape.hoverCursor = !layer.locked ? "move" : "not-allowed";
+          maskShape.on("moving", () => {
+            const snappedLeft = Math.round(maskShape.left || 0);
+            const snappedTop = Math.round(maskShape.top || 0);
+            if (
+              snappedLeft !== maskShape.left ||
+              snappedTop !== maskShape.top
+            ) {
+              maskShape.set({ left: snappedLeft, top: snappedTop });
+            }
           });
-
-          (fabricObj as any)._maskPolygon = maskPolygon;
-          canvas.add(maskPolygon);
+          canvas.add(maskShape);
+          maskShape.on("modified", () => {
+            const dx = Math.round(maskShape.left || 0);
+            const dy = Math.round(maskShape.top || 0);
+            const normDx = dx / canvas.width;
+            const normDy = dy / canvas.height;
+            const prev = layer.mask.offset ?? { x: 0, y: 0 };
+            const next = { x: prev.x + normDx, y: prev.y + normDy };
+            onLayerUpdate(objectLayerMapRef.current.get(fabricObj)!, {
+              mask: { ...layer.mask, offset: next },
+            });
+            maskShape.set({ left: 0, top: 0 });
+            canvas.requestRenderAll();
+          });
         }
 
         // Use requestAnimationFrame to batch renders

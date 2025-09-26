@@ -111,7 +111,9 @@ export class ProjectExporter {
               layer.mask.path,
               project.base.width,
               project.base.height,
-              layer.mask.feather
+              layer.mask.feather,
+              layer.mask.smoothing ?? 0,
+              layer.mask.offset
             );
 
             // Store mask canvas for combined mask creation
@@ -162,11 +164,31 @@ export class ProjectExporter {
         imageData: undefined,
         originalFile: undefined,
       },
-      layers: project.layers.map((layer) => ({
-        ...layer,
-        imageData: undefined,
-        originalFile: undefined,
-      })),
+      layers: project.layers.map((layer) => {
+        // Bake smoothing + offset into path for JSON export if mask present
+        let bakedPath = layer.mask.path;
+        if (layer.mask.enabled && layer.mask.path.length >= 3) {
+          bakedPath = MaskRenderer.bakeSmoothedPath(
+            layer.mask.path as [number, number][],
+            layer.mask.smoothing ?? 0,
+            layer.mask.offset
+          );
+        }
+
+        return {
+          ...layer,
+          imageData: undefined,
+          originalFile: undefined,
+          mask: {
+            ...layer.mask,
+            // Replace path with baked version
+            path: bakedPath,
+            // Smoothing/offset have been applied to the baked path; zero them to avoid double application on re-import
+            smoothing: 0,
+            offset: { x: 0, y: 0 },
+          },
+        };
+      }),
     };
   }
 
@@ -362,68 +384,59 @@ export async function renderComposite(
 
         // Handle masking
         if (layer.mask.enabled && layer.mask.path.length >= 3) {
-          // Create mask canvas with base image dimensions (not layer dimensions)
-          // because mask coordinates are normalized to the base image
-          const maskCanvas = MaskRenderer.createMaskCanvas(
-            layer.mask.path,
-            canvas.width, // Use base image width
-            canvas.height, // Use base image height
-            layer.mask.feather * scale
-          );
-
-          // Create temporary canvas for the masked layer
+          // Create a temporary canvas to isolate the masking operation
           const tempCanvas = document.createElement("canvas");
           const tempCtx = tempCanvas.getContext("2d")!;
-          tempCanvas.width = scaledWidth;
-          tempCanvas.height = scaledHeight;
+          tempCanvas.width = canvas.width;
+          tempCanvas.height = canvas.height;
 
-          // Draw image to temp canvas
-          tempCtx.drawImage(img, 0, 0, scaledWidth, scaledHeight);
+          // Apply the same transformations to the temp canvas
+          tempCtx.translate(centerX, centerY);
+          tempCtx.rotate((layer.transform.angle * Math.PI) / 180);
 
-          // We need to extract the portion of the mask that corresponds to where
-          // this layer will be positioned on the canvas
-          const layerLeft = centerX - scaledWidth / 2;
-          const layerTop = centerY - scaledHeight / 2;
+          if (layer.transform.skewX || layer.transform.skewY) {
+            tempCtx.transform(
+              1,
+              Math.tan(((layer.transform.skewY || 0) * Math.PI) / 180),
+              Math.tan(((layer.transform.skewX || 0) * Math.PI) / 180),
+              1,
+              0,
+              0
+            );
+          }
 
-          // Create a temporary canvas to extract the mask region
-          const extractedMaskCanvas = document.createElement("canvas");
-          const extractedMaskCtx = extractedMaskCanvas.getContext("2d")!;
-          extractedMaskCanvas.width = scaledWidth;
-          extractedMaskCanvas.height = scaledHeight;
-
-          // Draw the portion of the mask that overlaps with the layer
-          extractedMaskCtx.drawImage(
-            maskCanvas,
-            layerLeft,
-            layerTop,
-            scaledWidth,
-            scaledHeight, // source rectangle
-            0,
-            0,
-            scaledWidth,
-            scaledHeight // destination rectangle
-          );
-
-          // Apply mask to the layer image
-          tempCtx.globalCompositeOperation = "destination-in";
+          // Draw the layer image with transformations to temp canvas
           tempCtx.drawImage(
-            extractedMaskCanvas,
-            0,
-            0,
-            scaledWidth,
-            scaledHeight
-          );
-
-          // Draw masked result
-          ctx.drawImage(
-            tempCanvas,
+            img,
             -scaledWidth / 2,
             -scaledHeight / 2,
             scaledWidth,
             scaledHeight
           );
+
+          // Create the mask canvas in base image coordinates
+          const maskCanvas = MaskRenderer.createMaskCanvas(
+            layer.mask.path,
+            canvas.width,
+            canvas.height,
+            layer.mask.feather * scale,
+            layer.mask.smoothing ?? 0,
+            layer.mask.offset
+          );
+
+          // Apply mask to the temp canvas content
+          tempCtx.globalCompositeOperation = "destination-in";
+          // Reset transformations to apply mask in base image coordinate space
+          tempCtx.setTransform(1, 0, 0, 1, 0, 0);
+          tempCtx.drawImage(maskCanvas, 0, 0);
+
+          // Draw the masked result to main canvas (without transformations)
+          ctx.restore(); // Remove transformations
+          ctx.save();
+          ctx.globalAlpha = layer.opacity;
+          ctx.drawImage(tempCanvas, 0, 0);
         } else {
-          // Draw without mask
+          // Draw without mask (with current transformations applied)
           ctx.drawImage(
             img,
             -scaledWidth / 2,
