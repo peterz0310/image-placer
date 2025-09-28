@@ -1539,9 +1539,26 @@ export default function ImagePlacer() {
             <FloatingToolbar
               tool={canvasState.tool}
               transformMode={canvasState.transformMode}
-              onToolChange={(tool) =>
-                setCanvasState((prev) => ({ ...prev, tool }))
-              }
+              onToolChange={(tool) => {
+                if (tool === "mask" && canvasState.selectedLayerId && project) {
+                  const layer = project.layers.find(
+                    (l) => l.id === canvasState.selectedLayerId
+                  );
+                  if (layer) {
+                    const currentSmoothing = layer.mask.smoothing ?? 0;
+                    if (currentSmoothing !== 0) {
+                      handleLayerUpdate(layer.id, {
+                        mask: {
+                          ...layer.mask,
+                          smoothing: 0,
+                        },
+                      });
+                    }
+                  }
+                }
+
+                setCanvasState((prev) => ({ ...prev, tool }));
+              }}
               onTransformModeChange={(transformMode) =>
                 setCanvasState((prev) => ({ ...prev, transformMode }))
               }

@@ -160,12 +160,8 @@ export class MaskRenderer {
     // Helper to get wrapped point
     const get = (i: number) => points[(i + n) % n];
 
-    const p0 = get(-1);
-    const p1 = get(0);
-    const p2 = get(1);
-    const p3 = get(2);
-
-    ctx.moveTo(p1[0], p1[1]);
+    const firstPoint = get(0);
+    ctx.moveTo(firstPoint[0], firstPoint[1]);
 
     for (let i = 0; i < n; i++) {
       const p0 = get(i - 1);
@@ -190,7 +186,10 @@ export class MaskRenderer {
    * Returns an SVG path "d" string for a smoothed closed path using Catmull-Rom splines.
    * The input points are in absolute coordinates.
    */
-  static toSmoothedClosedPathD(points: number[][], smoothing: number): string {
+  static toSmoothedClosedPathD(
+    points: [number, number][],
+    smoothing: number
+  ): string {
     const n = points.length;
     if (n < 3 || (smoothing ?? 0) <= 0) {
       // Fallback to polygon path

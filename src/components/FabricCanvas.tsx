@@ -335,6 +335,177 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       obj.setCoords();
     };
 
+    const shouldShowMaskHandles = (layer?: Layer | null) => {
+      return (
+        !!layer &&
+        !layer.locked &&
+        canvasState?.tool === "mask" &&
+        layer.mask.enabled &&
+        layer.mask.visible &&
+        layer.mask.path.length > 0
+      );
+    };
+
+    const removeMaskHandles = (fabricObj: FabricObject) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+
+      const handles: Circle[] | undefined = (fabricObj as any)
+        ._maskPointHandles;
+      if (handles?.length) {
+        handles.forEach((handle) => {
+          handle.off();
+          canvas.remove(handle);
+        });
+      }
+      (fabricObj as any)._maskPointHandles = [];
+    };
+
+    const updateMaskVisualizationFromHandles = (
+      layer: Layer,
+      maskShape: FabricObject,
+      handles: Circle[]
+    ) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas || handles.length === 0) return;
+
+      const absPoints = handles.map(
+        (handle) => [handle.left ?? 0, handle.top ?? 0] as [number, number]
+      );
+
+      if (maskShape instanceof Polygon) {
+        maskShape.set({
+          points: absPoints.map(([x, y]) => ({ x, y })),
+        });
+      } else if (maskShape instanceof Path) {
+        const smoothing = layer.mask.smoothing ?? 0;
+        const d = MaskRenderer.toSmoothedClosedPathD(absPoints, smoothing);
+        const tempPath = new Path(d);
+        maskShape.set({
+          path: tempPath.path,
+          pathOffset: tempPath.pathOffset,
+        });
+        (maskShape as Path).pathOffset = tempPath.pathOffset;
+        tempPath.dispose?.();
+      }
+
+      maskShape.setCoords();
+      maskShape.dirty = true;
+      canvas.requestRenderAll();
+    };
+
+    const commitMaskHandlePositions = (
+      layer: Layer,
+      handles: Circle[],
+      fabricObj: FabricObject
+    ) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+
+      const layerId = objectLayerMapRef.current.get(fabricObj);
+      if (!layerId) return;
+
+      const latestLayer =
+        project?.layers.find((candidate) => candidate.id === layerId) ?? layer;
+
+      const offX = (latestLayer.mask.offset?.x ?? 0) * canvas.width;
+      const offY = (latestLayer.mask.offset?.y ?? 0) * canvas.height;
+
+      const nextPath = handles.map((handle) => {
+        const absX = handle.left ?? 0;
+        const absY = handle.top ?? 0;
+        return [
+          Number(((absX - offX) / canvas.width).toFixed(5)),
+          Number(((absY - offY) / canvas.height).toFixed(5)),
+        ] as [number, number];
+      });
+
+      onLayerUpdate(layerId, {
+        mask: {
+          ...latestLayer.mask,
+          path: nextPath,
+        },
+      });
+    };
+
+    const createMaskPointHandles = (
+      maskShape: FabricObject,
+      layer: Layer,
+      fabricObj: FabricObject
+    ) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas || layer.mask.path.length === 0) return;
+
+      removeMaskHandles(fabricObj);
+
+      const offX = (layer.mask.offset?.x ?? 0) * canvas.width;
+      const offY = (layer.mask.offset?.y ?? 0) * canvas.height;
+
+      const handles: Circle[] = layer.mask.path.map(([nx, ny], index) => {
+        const handle = new Circle({
+          left: nx * canvas.width + offX,
+          top: ny * canvas.height + offY,
+          radius: 6,
+          fill: "#00a86b",
+          stroke: "#ffffff",
+          strokeWidth: 2,
+          originX: "center",
+          originY: "center",
+          hasBorders: false,
+          hasControls: false,
+          lockMovementX: false,
+          lockMovementY: false,
+          hoverCursor: layer.locked ? "not-allowed" : "move",
+          selectable: !layer.locked && shouldShowMaskHandles(layer),
+          evented: !layer.locked && shouldShowMaskHandles(layer),
+          visible: shouldShowMaskHandles(layer),
+        });
+
+        (handle as any)._maskPointIndex = index;
+        (handle as any)._isMaskHandle = true;
+        (handle as any)._maskLayerId = layer.id;
+
+        const clampToCanvas = () => {
+          if (!canvas) return;
+          const half = handle.radius ?? 6;
+          const minX = -canvas.width * 0.25;
+          const maxX = canvas.width * 1.25;
+          const minY = -canvas.height * 0.25;
+          const maxY = canvas.height * 1.25;
+
+          const clampedLeft = Math.min(
+            Math.max(handle.left ?? 0, minX + half),
+            maxX - half
+          );
+          const clampedTop = Math.min(
+            Math.max(handle.top ?? 0, minY + half),
+            maxY - half
+          );
+          handle.set({ left: clampedLeft, top: clampedTop });
+        };
+
+        handle.on("moving", () => {
+          clampToCanvas();
+          updateMaskVisualizationFromHandles(layer, maskShape, handles);
+        });
+
+        const commit = () => {
+          clampToCanvas();
+          updateMaskVisualizationFromHandles(layer, maskShape, handles);
+          commitMaskHandlePositions(layer, handles, fabricObj);
+        };
+
+        handle.on("mouseup", commit);
+
+        canvas.add(handle);
+        (handle as any).bringToFront?.();
+        return handle;
+      });
+
+      (fabricObj as any)._maskPointHandles = handles;
+      canvas.requestRenderAll();
+    };
+
     const configureMaskOverlay = (
       maskShape: FabricObject,
       layer: Layer,
@@ -355,7 +526,17 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       maskShape.lockRotation = true;
       maskShape.objectCaching = true;
       maskShape.borderScaleFactor = 0.5;
-      maskShape.hoverCursor = !layer.locked ? "move" : "not-allowed";
+      const inMaskMode = canvasState?.tool === "mask";
+      const allowMaskDrag = !inMaskMode && !layer.locked;
+      maskShape.hoverCursor = inMaskMode
+        ? "default"
+        : layer.locked
+        ? "not-allowed"
+        : "move";
+      maskShape.evented = allowMaskDrag;
+      maskShape.selectable = allowMaskDrag;
+      (maskShape as any)._isMaskOverlay = true;
+      (maskShape as any)._maskLayerId = layer.id;
 
       maskShape.off("mousedown");
       maskShape.off("moving");
@@ -430,7 +611,25 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
         maskShape.set({ left: 0, top: 0 });
         canvas.requestRenderAll();
+
+        const handles: Circle[] | undefined = (fabricObj as any)
+          ._maskPointHandles;
+        if (handles?.length) {
+          const offX = nextOffset.x * canvas.width;
+          const offY = nextOffset.y * canvas.height;
+          handles.forEach((handle, index) => {
+            const point = layer.mask.path[index];
+            if (!point) return;
+            handle.set({
+              left: point[0] * canvas.width + offX,
+              top: point[1] * canvas.height + offY,
+            });
+          });
+          canvas.requestRenderAll();
+        }
       });
+
+      createMaskPointHandles(maskShape, layer, fabricObj);
     };
 
     useImperativeHandle(ref, () => ({
@@ -766,6 +965,30 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             obj.selectable = false;
             obj.evented = false; // Disable events so they don't block canvas mouse events
             obj.visible = true; // Explicitly ensure visibility
+
+            const layerId = objectLayerMapRef.current.get(obj);
+            const layer = project?.layers.find((l) => l.id === layerId);
+            const handles: Circle[] | undefined = (obj as any)
+              ._maskPointHandles;
+            const showHandles = shouldShowMaskHandles(layer);
+            handles?.forEach((handle) => {
+              handle.visible = showHandles;
+              handle.evented = showHandles;
+              handle.selectable = showHandles;
+            });
+
+            const maskShape = (obj as any)._maskPolygon as
+              | FabricObject
+              | undefined;
+            if (maskShape) {
+              maskShape.evented = false;
+              maskShape.selectable = false;
+              maskShape.hoverCursor = "default";
+            }
+          } else if ((obj as any)._isMaskOverlay) {
+            obj.evented = false;
+            obj.selectable = false;
+            obj.hoverCursor = "default";
           }
         });
       } else {
@@ -798,10 +1021,55 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           if (objectLayerMapRef.current.has(obj)) {
             obj.selectable = true;
             obj.evented = true;
+
+            const handles: Circle[] | undefined = (obj as any)
+              ._maskPointHandles;
+            handles?.forEach((handle) => {
+              handle.visible = false;
+              handle.evented = false;
+              handle.selectable = false;
+            });
+
+            const layerId = objectLayerMapRef.current.get(obj);
+            const layer = project?.layers.find((l) => l.id === layerId);
+            const maskShape = (obj as any)._maskPolygon as
+              | FabricObject
+              | undefined;
+            if (maskShape) {
+              const allowMaskDrag =
+                !!layer &&
+                !layer.locked &&
+                layer.mask.enabled &&
+                layer.mask.visible;
+              maskShape.evented = allowMaskDrag;
+              maskShape.selectable = allowMaskDrag;
+              maskShape.hoverCursor = allowMaskDrag
+                ? "move"
+                : layer?.locked
+                ? "not-allowed"
+                : "default";
+            }
+          } else if ((obj as any)._isMaskOverlay) {
+            const layerId = (obj as any)._maskLayerId as string | undefined;
+            const layer = project?.layers.find((l) => l.id === layerId);
+            const allowMaskDrag =
+              !!layer &&
+              !layer.locked &&
+              layer.mask.enabled &&
+              layer.mask.visible;
+            obj.evented = allowMaskDrag;
+            obj.selectable = allowMaskDrag;
+            obj.hoverCursor = allowMaskDrag
+              ? "move"
+              : layer?.locked
+              ? "not-allowed"
+              : "default";
           }
         });
       }
-    }, [canvasState?.tool]);
+
+      canvas.requestRenderAll();
+    }, [canvasState?.tool, project]);
 
     // Helper function to notify parent of mask state changes
     const notifyMaskStateChange = () => {
@@ -906,6 +1174,18 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
       const handleMouseDown = (e: any) => {
         if (canvasState?.tool === "mask" && canvasState?.selectedLayerId) {
+          const target = e.target as FabricObject | undefined;
+
+          if (target) {
+            if ((target as any)._isMaskHandle) {
+              return; // interacting with existing handle
+            }
+
+            if ((target as any)._isMaskOverlay) {
+              return; // interacting with mask overlay (offset drag)
+            }
+          }
+
           // Check if the selected layer is locked
           const selectedLayer = project?.layers.find(
             (l) => l.id === canvasState.selectedLayerId
@@ -1192,18 +1472,18 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         ) {
           const offX = (layer.mask.offset?.x ?? 0) * canvas.width;
           const offY = (layer.mask.offset?.y ?? 0) * canvas.height;
-          const absPoints = layer.mask.path.map((point) => [
-            point[0] * canvas.width + offX,
-            point[1] * canvas.height + offY,
-          ]);
+          const absPoints: [number, number][] = layer.mask.path.map(
+            ([x, y]) =>
+              [x * canvas.width + offX, y * canvas.height + offY] as [
+                number,
+                number
+              ]
+          );
 
           const smoothing = layer.mask.smoothing ?? 0;
           let maskShape: FabricObject;
           if (smoothing > 0 && absPoints.length >= 3) {
-            const d = MaskRenderer.toSmoothedClosedPathD(
-              absPoints as number[][],
-              smoothing
-            );
+            const d = MaskRenderer.toSmoothedClosedPathD(absPoints, smoothing);
             // Use Path for smoothed preview
             const path = new Path(d, {
               fill: "rgba(0, 255, 0, 0.2)",
@@ -1278,6 +1558,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           (fabricObj as any)._maskPolygon = undefined;
         }
 
+        removeMaskHandles(fabricObj);
+
         if (
           layer.mask.enabled &&
           layer.mask.visible &&
@@ -1285,18 +1567,18 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         ) {
           const offX = (layer.mask.offset?.x ?? 0) * canvas.width;
           const offY = (layer.mask.offset?.y ?? 0) * canvas.height;
-          const absPoints = layer.mask.path.map((point) => [
-            point[0] * canvas.width + offX,
-            point[1] * canvas.height + offY,
-          ]);
+          const absPoints: [number, number][] = layer.mask.path.map(
+            ([x, y]) =>
+              [x * canvas.width + offX, y * canvas.height + offY] as [
+                number,
+                number
+              ]
+          );
 
           const smoothing = layer.mask.smoothing ?? 0;
           let maskShape: FabricObject;
           if (smoothing > 0 && absPoints.length >= 3) {
-            const d = MaskRenderer.toSmoothedClosedPathD(
-              absPoints as number[][],
-              smoothing
-            );
+            const d = MaskRenderer.toSmoothedClosedPathD(absPoints, smoothing);
             const path = new Path(d, {
               fill: "rgba(0, 255, 0, 0.2)",
               stroke: "#00ff00",
@@ -1345,6 +1627,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         if (maskPolygon) {
           canvas.remove(maskPolygon);
         }
+
+        removeMaskHandles(fabricObj);
 
         canvas.remove(fabricObj);
         objectLayerMapRef.current.delete(fabricObj);
