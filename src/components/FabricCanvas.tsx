@@ -338,6 +338,104 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       obj.setCoords();
     };
 
+    const configureMaskOverlay = (
+      maskShape: FabricObject,
+      layer: Layer,
+      fabricObj: FabricObject
+    ) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) {
+        return;
+      }
+
+      const initialOffset = layer.mask.offset ?? { x: 0, y: 0 };
+      (maskShape as any)._appliedOffset = { ...initialOffset };
+
+      maskShape.hasBorders = true;
+      maskShape.hasControls = false;
+      maskShape.lockScalingX = true;
+      maskShape.lockScalingY = true;
+      maskShape.lockRotation = true;
+      maskShape.objectCaching = true;
+      maskShape.borderScaleFactor = 0.5;
+      maskShape.hoverCursor = !layer.locked ? "move" : "not-allowed";
+
+      maskShape.off("mousedown");
+      maskShape.off("moving");
+      maskShape.off("modified");
+
+      maskShape.on("mousedown", () => {
+        (maskShape as any)._dragStart = {
+          left: maskShape.left ?? 0,
+          top: maskShape.top ?? 0,
+        };
+      });
+
+      maskShape.on("moving", () => {
+        if (!(maskShape as any)._dragStart) {
+          (maskShape as any)._dragStart = {
+            left: maskShape.left ?? 0,
+            top: maskShape.top ?? 0,
+          };
+        }
+
+        const snappedLeft = Math.round(maskShape.left || 0);
+        const snappedTop = Math.round(maskShape.top || 0);
+
+        if (snappedLeft !== maskShape.left || snappedTop !== maskShape.top) {
+          maskShape.set({ left: snappedLeft, top: snappedTop });
+        }
+      });
+
+      maskShape.on("modified", () => {
+        const dragStart: { left: number; top: number } = (maskShape as any)
+          ._dragStart ?? { left: 0, top: 0 };
+        const currentLeft = maskShape.left ?? 0;
+        const currentTop = maskShape.top ?? 0;
+
+        const diffX = Math.round(currentLeft - dragStart.left);
+        const diffY = Math.round(currentTop - dragStart.top);
+
+        (maskShape as any)._dragStart = undefined;
+
+        if (diffX === 0 && diffY === 0) {
+          maskShape.set({ left: dragStart.left, top: dragStart.top });
+          canvas.requestRenderAll();
+          return;
+        }
+
+        const canvasWidth = canvas.getWidth();
+        const canvasHeight = canvas.getHeight();
+
+        if (!canvasWidth || !canvasHeight) {
+          maskShape.set({ left: dragStart.left, top: dragStart.top });
+          canvas.requestRenderAll();
+          return;
+        }
+
+        const previousOffset =
+          (maskShape as any)._appliedOffset ?? initialOffset;
+
+        const nextOffset = {
+          x: previousOffset.x + diffX / canvasWidth,
+          y: previousOffset.y + diffY / canvasHeight,
+        };
+
+        (maskShape as any)._appliedOffset = nextOffset;
+
+        const layerId = objectLayerMapRef.current.get(fabricObj);
+
+        if (layerId) {
+          onLayerUpdate(layerId, {
+            mask: { ...layer.mask, offset: nextOffset },
+          });
+        }
+
+        maskShape.set({ left: 0, top: 0 });
+        canvas.requestRenderAll();
+      });
+    };
+
     useImperativeHandle(ref, () => ({
       updateLayer: (layer: Layer) => {
         updateFabricLayer(layer);
@@ -1133,42 +1231,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
           // Store reference to mask overlay for this layer
           (fabricImg as any)._maskPolygon = maskShape;
-          // Make the overlay draggable to adjust offset
-          maskShape.hasBorders = true;
-          maskShape.hasControls = false; // no scaling/rotate controls
-          maskShape.lockScalingX = true;
-          maskShape.lockScalingY = true;
-          maskShape.lockRotation = true;
-          maskShape.objectCaching = true; // cache for smoother dragging
-          maskShape.borderScaleFactor = 0.5;
-          maskShape.hoverCursor = !layer.locked ? "move" : "not-allowed";
-          // Ensure movement is pixel-snapped for smoothness
-          maskShape.on("moving", () => {
-            const snappedLeft = Math.round(maskShape.left || 0);
-            const snappedTop = Math.round(maskShape.top || 0);
-            if (
-              snappedLeft !== maskShape.left ||
-              snappedTop !== maskShape.top
-            ) {
-              maskShape.set({ left: snappedLeft, top: snappedTop });
-            }
-          });
+          configureMaskOverlay(maskShape, layer, fabricImg);
           canvas.add(maskShape);
-          // Commit offset only when drag ends to avoid choppy rerenders
-          maskShape.on("modified", () => {
-            const dx = Math.round(maskShape.left || 0);
-            const dy = Math.round(maskShape.top || 0);
-            const normDx = dx / canvas.width;
-            const normDy = dy / canvas.height;
-            const prev = layer.mask.offset ?? { x: 0, y: 0 };
-            const next = { x: prev.x + normDx, y: prev.y + normDy };
-            onLayerUpdate(objectLayerMapRef.current.get(fabricImg)!, {
-              mask: { ...layer.mask, offset: next },
-            });
-            // Reset shape position back to anchored points and rely on re-render
-            maskShape.set({ left: 0, top: 0 });
-            canvas.requestRenderAll();
-          });
         }
 
         canvas.renderAll();
@@ -1258,38 +1322,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           }
 
           (fabricObj as any)._maskPolygon = maskShape;
-          maskShape.hasBorders = true;
-          maskShape.hasControls = false;
-          maskShape.lockScalingX = true;
-          maskShape.lockScalingY = true;
-          maskShape.lockRotation = true;
-          maskShape.objectCaching = true;
-          maskShape.borderScaleFactor = 0.5;
-          maskShape.hoverCursor = !layer.locked ? "move" : "not-allowed";
-          maskShape.on("moving", () => {
-            const snappedLeft = Math.round(maskShape.left || 0);
-            const snappedTop = Math.round(maskShape.top || 0);
-            if (
-              snappedLeft !== maskShape.left ||
-              snappedTop !== maskShape.top
-            ) {
-              maskShape.set({ left: snappedLeft, top: snappedTop });
-            }
-          });
+          configureMaskOverlay(maskShape, layer, fabricObj);
           canvas.add(maskShape);
-          maskShape.on("modified", () => {
-            const dx = Math.round(maskShape.left || 0);
-            const dy = Math.round(maskShape.top || 0);
-            const normDx = dx / canvas.width;
-            const normDy = dy / canvas.height;
-            const prev = layer.mask.offset ?? { x: 0, y: 0 };
-            const next = { x: prev.x + normDx, y: prev.y + normDy };
-            onLayerUpdate(objectLayerMapRef.current.get(fabricObj)!, {
-              mask: { ...layer.mask, offset: next },
-            });
-            maskShape.set({ left: 0, top: 0 });
-            canvas.requestRenderAll();
-          });
         }
 
         // Use requestAnimationFrame to batch renders
