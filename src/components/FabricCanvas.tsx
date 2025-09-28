@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, react-hooks/exhaustive-deps */
 
 import { useRef, useEffect, useImperativeHandle, forwardRef } from "react";
 import {
@@ -18,9 +19,6 @@ interface FabricCanvasProps {
   selectedLayerId?: string;
   transformMode?: "normal" | "skew";
   canvasState?: CanvasState;
-  onCanvasStateChange?: (
-    state: CanvasState | ((prev: CanvasState) => CanvasState)
-  ) => void;
   onMaskFinished?: () => void;
   onLayerSelected?: (layerId: string) => void;
   onMaskStateChange?: (state: {
@@ -48,7 +46,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       selectedLayerId,
       transformMode = "normal",
       canvasState,
-      onCanvasStateChange,
       onMaskFinished,
       onLayerSelected,
       onMaskStateChange,

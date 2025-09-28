@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import NextImage from "next/image";
 import { Project, Layer, BaseImage, CanvasState } from "@/types";
 import FabricCanvas, { FabricCanvasRef } from "./FabricCanvas";
 import LayerProperties from "./LayerProperties";
@@ -16,9 +17,7 @@ import {
   Plus,
   Archive,
   Move3D,
-  Maximize,
   MousePointer2,
-  Scissors,
   Eye,
   EyeOff,
   Lock,
@@ -40,7 +39,6 @@ export default function ImagePlacer() {
     redo,
     saveState,
     clearHistory,
-    getHistoryInfo,
     getCurrentProject,
   } = useHistory() as ReturnType<typeof useHistory> & {
     getCurrentProject: () => Project | null;
@@ -213,17 +211,20 @@ export default function ImagePlacer() {
 
   // Cleanup object URLs on unmount
   useEffect(() => {
+    const objectURLs = objectURLsRef;
+    const timeoutsRef = tagUpdateTimeouts;
+
     return () => {
-      objectURLsRef.current.forEach((url) => {
+      objectURLs.current.forEach((url) => {
         URL.revokeObjectURL(url);
       });
-      objectURLsRef.current.clear();
+      objectURLs.current.clear();
 
       // Clear any pending tag update timeouts
-      Object.values(tagUpdateTimeouts.current).forEach((timeout) => {
+      Object.values(timeoutsRef.current).forEach((timeout) => {
         clearTimeout(timeout);
       });
-      tagUpdateTimeouts.current = {};
+      timeoutsRef.current = {};
     };
   }, []);
 
@@ -885,12 +886,15 @@ export default function ImagePlacer() {
               {/* Base Image Info */}
               <div className="mb-4 p-3 bg-white rounded border">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded border bg-gray-100 flex-shrink-0 overflow-hidden">
+                  <div className="relative w-8 h-8 rounded border bg-gray-100 flex-shrink-0 overflow-hidden">
                     {project.base.imageData ? (
-                      <img
+                      <NextImage
                         src={project.base.imageData}
                         alt={project.base.name}
-                        className="w-full h-full object-cover"
+                        fill
+                        unoptimized
+                        sizes="32px"
+                        className="object-cover"
                       />
                     ) : (
                       <Square size={16} className="text-gray-400 m-auto" />
@@ -926,7 +930,7 @@ export default function ImagePlacer() {
             {/* Scrollable Layers List */}
             <div className="flex-1 overflow-y-auto px-4 pb-4">
               <div className="space-y-2">
-                {project.layers.map((layer, index) => (
+                {project.layers.map((layer) => (
                   <div
                     key={layer.id}
                     className={`p-3 bg-white rounded border cursor-pointer transition-colors ${
@@ -947,12 +951,15 @@ export default function ImagePlacer() {
                       <div className="flex-1 flex items-center gap-2">
                         <div className="flex items-center gap-2">
                           {/* Image thumbnail preview */}
-                          <div className="w-8 h-8 rounded border bg-gray-100 flex-shrink-0 overflow-hidden">
+                          <div className="relative w-8 h-8 rounded border bg-gray-100 flex-shrink-0 overflow-hidden">
                             {layer.imageData ? (
-                              <img
+                              <NextImage
                                 src={layer.imageData}
                                 alt={layer.name}
-                                className="w-full h-full object-cover"
+                                fill
+                                unoptimized
+                                sizes="32px"
+                                className="object-cover"
                               />
                             ) : (
                               <ImageIcon
@@ -1552,7 +1559,6 @@ export default function ImagePlacer() {
               selectedLayerId={canvasState.selectedLayerId}
               transformMode={canvasState.transformMode}
               canvasState={canvasState}
-              onCanvasStateChange={setCanvasState}
               onMaskFinished={() => {
                 // Switch back to transform mode when mask drawing is finished
                 setCanvasState((prev) => ({
