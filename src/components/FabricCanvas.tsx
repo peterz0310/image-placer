@@ -13,6 +13,10 @@ import {
 import { Project, Layer, CanvasState } from "@/types";
 import { MaskRenderer } from "@/utils/mask";
 
+const MASK_HANDLE_COLOR = "#00a86b";
+const MASK_HANDLE_SELECTED_COLOR = "#f97316";
+const MASK_EDGE_INSERT_THRESHOLD = 25;
+
 interface FabricCanvasProps {
   project: Project | null;
   onLayerUpdate: (layerId: string, updates: Partial<Layer>) => void;
@@ -66,6 +70,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       points: [],
       pointCircles: [],
     });
+
+    const selectedMaskHandleRef = useRef<Circle | null>(null);
+    const selectedMaskHandleInfoRef = useRef<{
+      layerId: string;
+      index: number;
+    } | null>(null);
 
     const lastProjectRef = useRef<{
       baseImageData: string | undefined;
@@ -346,6 +356,38 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       );
     };
 
+    const selectMaskHandle = (handle: Circle | null) => {
+      const canvas = fabricCanvasRef.current;
+      const previous = selectedMaskHandleRef.current;
+
+      if (previous && previous !== handle) {
+        previous.set({ fill: MASK_HANDLE_COLOR });
+        (previous as any)._isSelectedMaskHandle = false;
+      }
+
+      if (!handle) {
+        if (previous) {
+          previous.set({ fill: MASK_HANDLE_COLOR });
+          (previous as any)._isSelectedMaskHandle = false;
+        }
+        selectedMaskHandleRef.current = null;
+        selectedMaskHandleInfoRef.current = null;
+        canvas?.requestRenderAll();
+        return;
+      }
+
+      selectedMaskHandleRef.current = handle;
+      selectedMaskHandleInfoRef.current = {
+        layerId: (handle as any)._maskLayerId,
+        index: (handle as any)._maskPointIndex ?? 0,
+      };
+
+      handle.set({ fill: MASK_HANDLE_SELECTED_COLOR });
+      (handle as any)._isSelectedMaskHandle = true;
+      (handle as any).bringToFront?.();
+      canvas?.requestRenderAll();
+    };
+
     const removeMaskHandles = (fabricObj: FabricObject) => {
       const canvas = fabricCanvasRef.current;
       if (!canvas) return;
@@ -353,12 +395,19 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const handles: Circle[] | undefined = (fabricObj as any)
         ._maskPointHandles;
       if (handles?.length) {
+        const selectedHandle = selectedMaskHandleRef.current;
         handles.forEach((handle) => {
           handle.off();
           canvas.remove(handle);
         });
+        if (selectedHandle && handles.includes(selectedHandle)) {
+          selectedHandle.set({ fill: MASK_HANDLE_COLOR });
+          (selectedHandle as any)._isSelectedMaskHandle = false;
+          selectedMaskHandleRef.current = null;
+        }
       }
       (fabricObj as any)._maskPointHandles = [];
+      canvas.requestRenderAll();
     };
 
     const updateMaskVisualizationFromHandles = (
@@ -424,6 +473,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         mask: {
           ...latestLayer.mask,
           path: nextPath,
+          editorPath: nextPath,
         },
       });
     };
@@ -441,12 +491,18 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const offX = (layer.mask.offset?.x ?? 0) * canvas.width;
       const offY = (layer.mask.offset?.y ?? 0) * canvas.height;
 
+      const previousSelectionInfo =
+        selectedMaskHandleInfoRef.current &&
+        selectedMaskHandleInfoRef.current.layerId === layer.id
+          ? selectedMaskHandleInfoRef.current
+          : null;
+
       const handles: Circle[] = layer.mask.path.map(([nx, ny], index) => {
         const handle = new Circle({
           left: nx * canvas.width + offX,
           top: ny * canvas.height + offY,
           radius: 6,
-          fill: "#00a86b",
+          fill: MASK_HANDLE_COLOR,
           stroke: "#ffffff",
           strokeWidth: 2,
           originX: "center",
@@ -464,6 +520,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         (handle as any)._maskPointIndex = index;
         (handle as any)._isMaskHandle = true;
         (handle as any)._maskLayerId = layer.id;
+
+        handle.on("mousedown", () => {
+          if (canvasState?.tool === "mask" && !layer.locked) {
+            selectMaskHandle(handle);
+          }
+        });
 
         const clampToCanvas = () => {
           if (!canvas) return;
@@ -493,6 +555,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           clampToCanvas();
           updateMaskVisualizationFromHandles(layer, maskShape, handles);
           commitMaskHandlePositions(layer, handles, fabricObj);
+          if (canvasState?.tool === "mask" && !layer.locked) {
+            selectMaskHandle(handle);
+          }
         };
 
         handle.on("mouseup", commit);
@@ -503,7 +568,208 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       });
 
       (fabricObj as any)._maskPointHandles = handles;
+
+      if (previousSelectionInfo) {
+        const nextHandle = handles[previousSelectionInfo.index];
+        if (nextHandle) {
+          selectMaskHandle(nextHandle);
+        } else {
+          selectMaskHandle(null);
+        }
+      }
       canvas.requestRenderAll();
+    };
+
+    const deleteMaskHandle = (handle: Circle | null) => {
+      if (!handle || !project) return;
+
+      const layerId = (handle as any)._maskLayerId as string | undefined;
+      if (!layerId) return;
+
+      const layer = project.layers.find(
+        (candidate) => candidate.id === layerId
+      );
+      if (!layer || layer.locked) return;
+
+      const pointIndex = (handle as any)._maskPointIndex;
+      if (typeof pointIndex !== "number") return;
+
+      const basePath =
+        layer.mask.editorPath && layer.mask.editorPath.length >= 3
+          ? [...layer.mask.editorPath]
+          : [...layer.mask.path];
+
+      if (!basePath.length) return;
+
+      const nextPath = basePath.filter((_, idx) => idx !== pointIndex);
+
+      if (nextPath.length < 3) {
+        onLayerUpdate(layerId, {
+          mask: {
+            ...layer.mask,
+            enabled: false,
+            path: [],
+            editorPath: [],
+          },
+        });
+      } else {
+        onLayerUpdate(layerId, {
+          mask: {
+            ...layer.mask,
+            path: nextPath,
+            editorPath: nextPath,
+          },
+        });
+      }
+
+      selectMaskHandle(null);
+    };
+
+    const findClosestPointOnMask = (
+      absolutePoints: [number, number][],
+      target: { x: number; y: number }
+    ) => {
+      let bestIndex = -1;
+      let bestDistance = Infinity;
+      let bestPoint: [number, number] | null = null;
+
+      for (let i = 0; i < absolutePoints.length; i++) {
+        const start = absolutePoints[i];
+        const end = absolutePoints[(i + 1) % absolutePoints.length];
+
+        const segmentVectorX = end[0] - start[0];
+        const segmentVectorY = end[1] - start[1];
+        const segmentLengthSq = segmentVectorX ** 2 + segmentVectorY ** 2;
+
+        let t = 0;
+        if (segmentLengthSq > 0) {
+          t =
+            ((target.x - start[0]) * segmentVectorX +
+              (target.y - start[1]) * segmentVectorY) /
+            segmentLengthSq;
+          t = Math.max(0, Math.min(1, t));
+        }
+
+        const closestPoint: [number, number] = [
+          start[0] + segmentVectorX * t,
+          start[1] + segmentVectorY * t,
+        ];
+
+        const distance = Math.hypot(
+          target.x - closestPoint[0],
+          target.y - closestPoint[1]
+        );
+
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = i;
+          bestPoint = closestPoint;
+        }
+      }
+
+      return {
+        index: bestIndex,
+        distance: bestDistance,
+        point: bestPoint,
+      };
+    };
+
+    const isPointerNearMaskEdge = (
+      layer: Layer,
+      pointer: { x: number; y: number },
+      canvas: Canvas
+    ) => {
+      if (!layer.mask.enabled) return false;
+
+      const basePath =
+        layer.mask.editorPath && layer.mask.editorPath.length >= 3
+          ? layer.mask.editorPath
+          : layer.mask.path;
+
+      if (!basePath || basePath.length < 3) return false;
+
+      const canvasWidth = canvas.getWidth();
+      const canvasHeight = canvas.getHeight();
+      if (!canvasWidth || !canvasHeight) return false;
+
+      const offsetX = (layer.mask.offset?.x ?? 0) * canvasWidth;
+      const offsetY = (layer.mask.offset?.y ?? 0) * canvasHeight;
+
+      const absolutePoints: [number, number][] = basePath.map(([x, y]) => [
+        x * canvasWidth + offsetX,
+        y * canvasHeight + offsetY,
+      ]);
+
+      if (absolutePoints.length < 3) return false;
+
+      const { distance } = findClosestPointOnMask(absolutePoints, pointer);
+      return distance <= MASK_EDGE_INSERT_THRESHOLD;
+    };
+
+    const insertMaskPointAtPosition = (pointer: { x: number; y: number }) => {
+      if (!project || !canvasState?.selectedLayerId) return;
+
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+
+      const layer = project.layers.find(
+        (candidate) => candidate.id === canvasState.selectedLayerId
+      );
+      if (!layer || layer.locked || !layer.mask.enabled) return;
+
+      const basePath =
+        layer.mask.editorPath && layer.mask.editorPath.length >= 3
+          ? layer.mask.editorPath
+          : layer.mask.path;
+
+      if (!basePath || basePath.length < 3) return;
+
+      const canvasWidth = canvas.getWidth();
+      const canvasHeight = canvas.getHeight();
+      if (!canvasWidth || !canvasHeight) return;
+
+      const offsetX = (layer.mask.offset?.x ?? 0) * canvasWidth;
+      const offsetY = (layer.mask.offset?.y ?? 0) * canvasHeight;
+
+      const absolutePoints: [number, number][] = basePath.map(([x, y]) => [
+        x * canvasWidth + offsetX,
+        y * canvasHeight + offsetY,
+      ]);
+
+      if (absolutePoints.length < 3) return;
+
+      const { index, distance, point } = findClosestPointOnMask(
+        absolutePoints,
+        pointer
+      );
+
+      if (index < 0 || !point || distance > MASK_EDGE_INSERT_THRESHOLD) {
+        return;
+      }
+
+      const normalizedPoint: [number, number] = [
+        Number(((point[0] - offsetX) / canvasWidth).toFixed(5)),
+        Number(((point[1] - offsetY) / canvasHeight).toFixed(5)),
+      ];
+
+      const nextPath = [
+        ...basePath.slice(0, index + 1),
+        normalizedPoint,
+        ...basePath.slice(index + 1),
+      ];
+
+      selectedMaskHandleInfoRef.current = {
+        layerId: layer.id,
+        index: index + 1,
+      };
+
+      onLayerUpdate(layer.id, {
+        mask: {
+          ...layer.mask,
+          path: nextPath,
+          editorPath: nextPath,
+        },
+      });
     };
 
     const configureMaskOverlay = (
@@ -604,8 +870,16 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         const layerId = objectLayerMapRef.current.get(fabricObj);
 
         if (layerId) {
+          const currentLayer =
+            project?.layers.find((candidate) => candidate.id === layerId) ??
+            layer;
+
           onLayerUpdate(layerId, {
-            mask: { ...layer.mask, offset: nextOffset },
+            mask: {
+              ...currentLayer.mask,
+              offset: nextOffset,
+              editorOffset: nextOffset,
+            },
           });
         }
 
@@ -1112,6 +1386,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           feather: 2.0,
           smoothing: 0.4,
           offset: { x: 0, y: 0 },
+          editorPath: normalizedPoints,
+          editorSmoothing: 0.4,
+          editorOffset: { x: 0, y: 0 },
         },
       });
 
@@ -1199,6 +1476,13 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           const point = { x: pointer.x, y: pointer.y };
 
           if (!maskDrawingRef.current.isDrawing) {
+            if (
+              selectedLayer &&
+              selectedLayer.mask &&
+              isPointerNearMaskEdge(selectedLayer, point, canvas)
+            ) {
+              return;
+            }
             // Start new mask
             maskDrawingRef.current.isDrawing = true;
             maskDrawingRef.current.points = [point];
@@ -1295,9 +1579,25 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       };
 
       const handleDoubleClick = (e: any) => {
-        if (canvasState?.tool === "mask" && maskDrawingRef.current.isDrawing) {
+        if (canvasState?.tool !== "mask") return;
+
+        if (maskDrawingRef.current.isDrawing) {
           finishMask();
+          return;
         }
+
+        const target = e.target as FabricObject | undefined;
+        if (target) {
+          if ((target as any)._isMaskHandle || (target as any)._isMaskOverlay) {
+            return;
+          }
+        }
+
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+
+        const pointer = canvas.getPointer(e.e);
+        insertMaskPointAtPosition(pointer);
       };
 
       const handleRightClick = (e: any) => {
@@ -1344,6 +1644,70 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       onLayerUpdate,
       project,
     ]);
+
+    useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (canvasState?.tool !== "mask") return;
+
+        const selectedHandle = selectedMaskHandleRef.current;
+        if (!selectedHandle) return;
+
+        const activeElement = document.activeElement as HTMLElement | null;
+        if (activeElement) {
+          const tagName = activeElement.tagName;
+          if (
+            tagName === "INPUT" ||
+            tagName === "TEXTAREA" ||
+            tagName === "SELECT" ||
+            activeElement.isContentEditable
+          ) {
+            return;
+          }
+        }
+
+        const handleLayerId = (selectedHandle as any)._maskLayerId as
+          | string
+          | undefined;
+        if (!handleLayerId || handleLayerId !== canvasState?.selectedLayerId) {
+          return;
+        }
+
+        if (event.key === "Delete" || event.key === "Backspace") {
+          event.preventDefault();
+          deleteMaskHandle(selectedHandle);
+        } else if (event.key === "Escape") {
+          selectMaskHandle(null);
+        }
+      };
+
+      window.addEventListener("keydown", handleKeyDown);
+      return () => {
+        window.removeEventListener("keydown", handleKeyDown);
+      };
+    }, [
+      canvasState?.tool,
+      canvasState?.selectedLayerId,
+      project,
+      onLayerUpdate,
+    ]);
+
+    useEffect(() => {
+      if (canvasState?.tool !== "mask" && selectedMaskHandleRef.current) {
+        selectMaskHandle(null);
+      }
+    }, [canvasState?.tool]);
+
+    useEffect(() => {
+      const currentHandle = selectedMaskHandleRef.current;
+      if (!currentHandle) return;
+
+      const handleLayerId = (currentHandle as any)._maskLayerId as
+        | string
+        | undefined;
+      if (handleLayerId && handleLayerId !== canvasState?.selectedLayerId) {
+        selectMaskHandle(null);
+      }
+    }, [canvasState?.selectedLayerId]);
 
     const updateCanvasFromProject = async (project: Project) => {
       const canvas = fabricCanvasRef.current;

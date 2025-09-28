@@ -21,6 +21,10 @@ export interface Mask {
   smoothing?: number;
   // Normalized offset (0..1 of base width/height); positive x moves right, positive y moves down
   offset?: { x: number; y: number };
+  // Original editor control points before smoothing/offset baking (stored for rehydration on import)
+  editorPath?: [number, number][];
+  editorSmoothing?: number;
+  editorOffset?: { x: number; y: number };
 }
 
 export interface Layer {

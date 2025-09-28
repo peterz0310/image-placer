@@ -156,6 +156,42 @@ export default function ImagePlacer() {
     []
   );
 
+  const hydrateMaskEditorData = useCallback((project: Project): Project => {
+    return {
+      ...project,
+      layers: project.layers.map((layer) => {
+        if (!layer.mask) return layer;
+
+        const hasEditorPath = Array.isArray(layer.mask.editorPath);
+        const editorPath =
+          hasEditorPath && (layer.mask.editorPath?.length ?? 0) >= 3
+            ? layer.mask.editorPath!
+            : layer.mask.path ?? [];
+
+        const editorSmoothing =
+          typeof layer.mask.editorSmoothing === "number"
+            ? layer.mask.editorSmoothing
+            : layer.mask.smoothing ?? 0;
+
+        const editorOffset = layer.mask.editorOffset ??
+          layer.mask.offset ?? { x: 0, y: 0 };
+
+        return {
+          ...layer,
+          mask: {
+            ...layer.mask,
+            path: editorPath,
+            editorPath,
+            smoothing: editorSmoothing,
+            editorSmoothing,
+            offset: editorOffset,
+            editorOffset,
+          },
+        };
+      }),
+    };
+  }, []);
+
   /**
    * Updates project state and saves to history
    */
@@ -592,13 +628,15 @@ export default function ImagePlacer() {
             projectData
           );
 
+          const hydratedProject = hydrateMaskEditorData(migratedProject);
+
           const loadedProject = {
-            ...migratedProject,
+            ...hydratedProject,
             metadata: {
               created:
-                migratedProject.metadata?.created || new Date().toISOString(),
+                hydratedProject.metadata?.created || new Date().toISOString(),
               modified: new Date().toISOString(),
-              author: migratedProject.metadata?.author,
+              author: hydratedProject.metadata?.author,
             },
           };
           setLocalProject(loadedProject);
@@ -631,13 +669,15 @@ export default function ImagePlacer() {
               projectData
             );
 
+            const hydratedProject = hydrateMaskEditorData(migratedProject);
+
             const loadedProject = {
-              ...migratedProject,
+              ...hydratedProject,
               metadata: {
                 created:
-                  migratedProject.metadata?.created || new Date().toISOString(),
+                  hydratedProject.metadata?.created || new Date().toISOString(),
                 modified: new Date().toISOString(),
-                author: migratedProject.metadata?.author,
+                author: hydratedProject.metadata?.author,
               },
             };
             setLocalProject(loadedProject);
@@ -1320,7 +1360,11 @@ export default function ImagePlacer() {
                                     +(cur - 0.05).toFixed(2)
                                   );
                                   handleLayerUpdate(layer.id, {
-                                    mask: { ...layer.mask, smoothing: next },
+                                    mask: {
+                                      ...layer.mask,
+                                      smoothing: next,
+                                      editorSmoothing: next,
+                                    },
                                   });
                                 }}
                               >
@@ -1336,7 +1380,11 @@ export default function ImagePlacer() {
                                     +(cur + 0.05).toFixed(2)
                                   );
                                   handleLayerUpdate(layer.id, {
-                                    mask: { ...layer.mask, smoothing: next },
+                                    mask: {
+                                      ...layer.mask,
+                                      smoothing: next,
+                                      editorSmoothing: next,
+                                    },
                                   });
                                 }}
                               >
@@ -1356,6 +1404,7 @@ export default function ImagePlacer() {
                                 mask: {
                                   ...layer.mask,
                                   smoothing: parseFloat(e.target.value),
+                                  editorSmoothing: parseFloat(e.target.value),
                                 },
                               });
                             }}
@@ -1382,13 +1431,15 @@ export default function ImagePlacer() {
                                           (layer.mask.offset?.x ?? 0) - 0.01
                                         ).toFixed(3)
                                       );
+                                      const nextOffset = {
+                                        x,
+                                        y: layer.mask.offset?.y ?? 0,
+                                      };
                                       handleLayerUpdate(layer.id, {
                                         mask: {
                                           ...layer.mask,
-                                          offset: {
-                                            x,
-                                            y: layer.mask.offset?.y ?? 0,
-                                          },
+                                          offset: nextOffset,
+                                          editorOffset: nextOffset,
                                         },
                                       });
                                     }}
@@ -1405,13 +1456,15 @@ export default function ImagePlacer() {
                                           (layer.mask.offset?.x ?? 0) + 0.01
                                         ).toFixed(3)
                                       );
+                                      const nextOffset = {
+                                        x,
+                                        y: layer.mask.offset?.y ?? 0,
+                                      };
                                       handleLayerUpdate(layer.id, {
                                         mask: {
                                           ...layer.mask,
-                                          offset: {
-                                            x,
-                                            y: layer.mask.offset?.y ?? 0,
-                                          },
+                                          offset: nextOffset,
+                                          editorOffset: nextOffset,
                                         },
                                       });
                                     }}
@@ -1429,13 +1482,15 @@ export default function ImagePlacer() {
                                 onChange={(e) => {
                                   e.stopPropagation();
                                   const x = parseFloat(e.target.value);
+                                  const nextOffset = {
+                                    x,
+                                    y: layer.mask.offset?.y ?? 0,
+                                  };
                                   handleLayerUpdate(layer.id, {
                                     mask: {
                                       ...layer.mask,
-                                      offset: {
-                                        x,
-                                        y: layer.mask.offset?.y ?? 0,
-                                      },
+                                      offset: nextOffset,
+                                      editorOffset: nextOffset,
                                     },
                                   });
                                 }}
@@ -1462,13 +1517,15 @@ export default function ImagePlacer() {
                                           (layer.mask.offset?.y ?? 0) - 0.01
                                         ).toFixed(3)
                                       );
+                                      const nextOffset = {
+                                        x: layer.mask.offset?.x ?? 0,
+                                        y,
+                                      };
                                       handleLayerUpdate(layer.id, {
                                         mask: {
                                           ...layer.mask,
-                                          offset: {
-                                            x: layer.mask.offset?.x ?? 0,
-                                            y,
-                                          },
+                                          offset: nextOffset,
+                                          editorOffset: nextOffset,
                                         },
                                       });
                                     }}
@@ -1485,13 +1542,15 @@ export default function ImagePlacer() {
                                           (layer.mask.offset?.y ?? 0) + 0.01
                                         ).toFixed(3)
                                       );
+                                      const nextOffset = {
+                                        x: layer.mask.offset?.x ?? 0,
+                                        y,
+                                      };
                                       handleLayerUpdate(layer.id, {
                                         mask: {
                                           ...layer.mask,
-                                          offset: {
-                                            x: layer.mask.offset?.x ?? 0,
-                                            y,
-                                          },
+                                          offset: nextOffset,
+                                          editorOffset: nextOffset,
                                         },
                                       });
                                     }}
@@ -1509,13 +1568,15 @@ export default function ImagePlacer() {
                                 onChange={(e) => {
                                   e.stopPropagation();
                                   const y = parseFloat(e.target.value);
+                                  const nextOffset = {
+                                    x: layer.mask.offset?.x ?? 0,
+                                    y,
+                                  };
                                   handleLayerUpdate(layer.id, {
                                     mask: {
                                       ...layer.mask,
-                                      offset: {
-                                        x: layer.mask.offset?.x ?? 0,
-                                        y,
-                                      },
+                                      offset: nextOffset,
+                                      editorOffset: nextOffset,
                                     },
                                   });
                                 }}
@@ -1551,6 +1612,7 @@ export default function ImagePlacer() {
                         mask: {
                           ...layer.mask,
                           smoothing: 0,
+                          editorSmoothing: 0,
                         },
                       });
                     }

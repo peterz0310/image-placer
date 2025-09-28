@@ -166,12 +166,21 @@ export class ProjectExporter {
       },
       layers: project.layers.map((layer) => {
         // Bake smoothing + offset into path for JSON export if mask present
+        const editorPath =
+          layer.mask.editorPath && layer.mask.editorPath.length >= 3
+            ? layer.mask.editorPath
+            : layer.mask.path;
+        const editorSmoothing =
+          layer.mask.editorSmoothing ?? layer.mask.smoothing ?? 0;
+        const editorOffset = layer.mask.editorOffset ??
+          layer.mask.offset ?? { x: 0, y: 0 };
+
         let bakedPath = layer.mask.path;
-        if (layer.mask.enabled && layer.mask.path.length >= 3) {
+        if (layer.mask.enabled && editorPath.length >= 3) {
           bakedPath = MaskRenderer.bakeSmoothedPath(
-            layer.mask.path as [number, number][],
-            layer.mask.smoothing ?? 0,
-            layer.mask.offset
+            editorPath,
+            editorSmoothing,
+            editorOffset
           );
         }
 
@@ -183,6 +192,9 @@ export class ProjectExporter {
             ...layer.mask,
             // Replace path with baked version
             path: bakedPath,
+            editorPath,
+            editorSmoothing,
+            editorOffset,
             // Smoothing/offset have been applied to the baked path; zero them to avoid double application on re-import
             smoothing: 0,
             offset: { x: 0, y: 0 },
