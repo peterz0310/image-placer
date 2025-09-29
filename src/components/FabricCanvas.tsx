@@ -62,6 +62,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const fabricCanvasRef = useRef<Canvas | null>(null);
     const objectLayerMapRef = useRef<Map<FabricObject, string>>(new Map());
+    const dragOpacityMapRef = useRef<Map<FabricObject, number>>(new Map());
+    const lastDraggedObjectRef = useRef<FabricObject | null>(null);
     const maskDrawingRef = useRef<{
       isDrawing: boolean;
       points: { x: number; y: number }[];
@@ -583,6 +585,23 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       });
     };
 
+    const bringMaskHandlesToFront = (fabricObj: FabricObject) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+
+      const handles: Circle[] | undefined = (fabricObj as any)
+        ._maskPointHandles;
+      if (!handles?.length) {
+        return;
+      }
+
+      handles.forEach((handle) => {
+        handle.bringToFront?.();
+      });
+
+      canvas.requestRenderAll();
+    };
+
     const createMaskPointHandles = (
       maskShape: FabricObject,
       layer: Layer,
@@ -673,6 +692,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       });
 
       (fabricObj as any)._maskPointHandles = handles;
+      bringMaskHandlesToFront(fabricObj);
 
       if (previousSelectionInfo) {
         const nextHandle = handles[previousSelectionInfo.index];
@@ -898,12 +918,16 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       maskShape.objectCaching = true;
       maskShape.borderScaleFactor = 0.5;
       const inMaskMode = canvasState?.tool === "mask";
-      const allowMaskDrag = !inMaskMode && !layer.locked;
-      maskShape.hoverCursor = inMaskMode
-        ? "default"
-        : layer.locked
+      const allowMaskDrag =
+        inMaskMode &&
+        !layer.locked &&
+        layer.mask.enabled &&
+        layer.mask.visible;
+      maskShape.hoverCursor = layer.locked
         ? "not-allowed"
-        : "move";
+        : allowMaskDrag
+        ? "move"
+        : "default";
       maskShape.evented = allowMaskDrag;
       maskShape.selectable = allowMaskDrag;
       (maskShape as any)._isMaskOverlay = true;
@@ -950,6 +974,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         if (diffX === 0 && diffY === 0) {
           maskShape.set({ left: dragStart.left, top: dragStart.top });
           canvas.requestRenderAll();
+          bringMaskHandlesToFront(fabricObj);
           return;
         }
 
@@ -959,6 +984,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         if (!canvasWidth || !canvasHeight) {
           maskShape.set({ left: dragStart.left, top: dragStart.top });
           canvas.requestRenderAll();
+          bringMaskHandlesToFront(fabricObj);
           return;
         }
 
@@ -990,6 +1016,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
         maskShape.set({ left: 0, top: 0 });
         canvas.requestRenderAll();
+        bringMaskHandlesToFront(fabricObj);
 
         const handles: Circle[] | undefined = (fabricObj as any)
           ._maskPointHandles;
@@ -1137,10 +1164,96 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         canvasPanRef.current
       );
 
+      const restoreDragOpacity = (target?: FabricObject) => {
+        const targets = target
+          ? dragOpacityMapRef.current.has(target)
+            ? [target]
+            : []
+          : Array.from(dragOpacityMapRef.current.keys());
+
+        if (targets.length === 0) {
+          return;
+        }
+
+        let didUpdate = false;
+        targets.forEach((fabricObj) => {
+          const storedOpacity = dragOpacityMapRef.current.get(fabricObj);
+          if (storedOpacity === undefined) {
+            return;
+          }
+
+          let nextOpacity = storedOpacity;
+          const layerId = objectLayerMapRef.current.get(fabricObj);
+          if (layerId) {
+            const currentProject = projectRef.current;
+            const layer = currentProject?.layers.find((l) => l.id === layerId);
+            if (layer) {
+              nextOpacity = layer.opacity;
+            }
+          }
+
+          fabricObj.set("opacity", nextOpacity);
+          if (fabricObj === lastDraggedObjectRef.current) {
+            canvas.setActiveObject(fabricObj);
+            fabricObj.setCoords?.();
+          }
+          dragOpacityMapRef.current.delete(fabricObj);
+          didUpdate = true;
+        });
+
+        if (didUpdate) {
+          canvas.requestRenderAll();
+        }
+      };
+
+      const handleObjectMoving = (e: any) => {
+        const obj = e.target as FabricObject | undefined;
+        if (!obj || dragOpacityMapRef.current.has(obj)) {
+          return;
+        }
+
+        if ((obj as any).type !== "image") {
+          return;
+        }
+
+        if (!objectLayerMapRef.current.has(obj)) {
+          return;
+        }
+
+        lastDraggedObjectRef.current = obj;
+
+        const currentOpacity = obj.opacity ?? 1;
+        if (currentOpacity <= 0.5) {
+          return;
+        }
+
+        dragOpacityMapRef.current.set(obj, currentOpacity);
+        obj.set("opacity", 0.5);
+        canvas.requestRenderAll();
+      };
+
+      const handleMouseUpAfterDrag = () => {
+        if (dragOpacityMapRef.current.size > 0) {
+          restoreDragOpacity();
+        }
+
+        const lastDragged = lastDraggedObjectRef.current;
+        if (lastDragged) {
+          if (!dragOpacityMapRef.current.has(lastDragged)) {
+            canvas.setActiveObject(lastDragged);
+            lastDragged.setCoords?.();
+            canvas.requestRenderAll();
+          }
+          lastDraggedObjectRef.current = null;
+        }
+      };
+
       // Handle object modification events
       canvas.on("object:modified", (e) => {
         const obj = e.target;
         if (!obj) return;
+
+        restoreDragOpacity(obj);
 
         const layerId = objectLayerMapRef.current.get(obj);
         const currentProject = projectRef.current;
@@ -1216,6 +1329,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         calculateNormalizedScale();
       });
 
+      canvas.on("object:moving", handleObjectMoving);
+      canvas.on("mouse:up", handleMouseUpAfterDrag);
+
       // Add additional debugging events for skew mode
       canvas.on("object:scaling", (e) => {
         // Additional event handling for skew mode can be added here if needed
@@ -1249,6 +1365,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       });
 
       return () => {
+        canvas.off("object:moving", handleObjectMoving);
+        canvas.off("mouse:up", handleMouseUpAfterDrag);
         canvas.dispose();
         fabricCanvasRef.current = null;
       };
@@ -1588,14 +1706,45 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               | FabricObject
               | undefined;
             if (maskShape) {
-              maskShape.evented = false;
-              maskShape.selectable = false;
-              maskShape.hoverCursor = "default";
+              const allowMaskDrag =
+                !!layer &&
+                !layer.locked &&
+                layer.mask.enabled &&
+                layer.mask.visible;
+              maskShape.evented = allowMaskDrag;
+              maskShape.selectable = allowMaskDrag;
+              maskShape.hoverCursor = layer?.locked
+                ? "not-allowed"
+                : allowMaskDrag
+                ? "move"
+                : "default";
+              if (allowMaskDrag) {
+                bringMaskHandlesToFront(obj);
+              }
             }
           } else if ((obj as any)._isMaskOverlay) {
-            obj.evented = false;
-            obj.selectable = false;
-            obj.hoverCursor = "default";
+            const layerId = (obj as any)._maskLayerId as string | undefined;
+            const layer = project?.layers.find((l) => l.id === layerId);
+            const allowMaskDrag =
+              !!layer &&
+              !layer.locked &&
+              layer.mask.enabled &&
+              layer.mask.visible;
+            obj.evented = allowMaskDrag;
+            obj.selectable = allowMaskDrag;
+            obj.hoverCursor = layer?.locked
+              ? "not-allowed"
+              : allowMaskDrag
+              ? "move"
+              : "default";
+            if (allowMaskDrag && layerId) {
+              const layerObject = canvas
+                .getObjects()
+                .find((candidate) => objectLayerMapRef.current.get(candidate) === layerId);
+              if (layerObject) {
+                bringMaskHandlesToFront(layerObject);
+              }
+            }
           }
         });
       } else if (canvasState?.tool === "pan") {
@@ -1676,34 +1825,16 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               | FabricObject
               | undefined;
             if (maskShape) {
-              const allowMaskDrag =
-                !!layer &&
-                !layer.locked &&
-                layer.mask.enabled &&
-                layer.mask.visible;
-              maskShape.evented = allowMaskDrag;
-              maskShape.selectable = allowMaskDrag;
-              maskShape.hoverCursor = allowMaskDrag
-                ? "move"
-                : layer?.locked
-                ? "not-allowed"
-                : "default";
+              maskShape.evented = false;
+              maskShape.selectable = false;
+              maskShape.hoverCursor = layer?.locked ? "not-allowed" : "default";
             }
           } else if ((obj as any)._isMaskOverlay) {
             const layerId = (obj as any)._maskLayerId as string | undefined;
             const layer = project?.layers.find((l) => l.id === layerId);
-            const allowMaskDrag =
-              !!layer &&
-              !layer.locked &&
-              layer.mask.enabled &&
-              layer.mask.visible;
-            obj.evented = allowMaskDrag;
-            obj.selectable = allowMaskDrag;
-            obj.hoverCursor = allowMaskDrag
-              ? "move"
-              : layer?.locked
-              ? "not-allowed"
-              : "default";
+            obj.evented = false;
+            obj.selectable = false;
+            obj.hoverCursor = layer?.locked ? "not-allowed" : "default";
           }
         });
       }
@@ -1814,6 +1945,43 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
     useEffect(() => {
       const canvas = fabricCanvasRef.current;
       if (!canvas) return;
+
+      const removeTrailingDuplicatePoint = (finalPointer?: { x: number; y: number }) => {
+        if (!maskDrawingRef.current.isDrawing) return;
+        const points = maskDrawingRef.current.points;
+        if (points.length === 0) return;
+
+        if (points.length >= 2) {
+          const last = points[points.length - 1];
+          const prev = points[points.length - 2];
+          const dx = last.x - prev.x;
+          const dy = last.y - prev.y;
+          const distanceSq = dx * dx + dy * dy;
+
+          // Double-clicks can create two nearly identical points; drop the extra point.
+          if (distanceSq <= 16) {
+            points.pop();
+            const duplicateCircle = maskDrawingRef.current.pointCircles.pop();
+            if (duplicateCircle && fabricCanvasRef.current) {
+              fabricCanvasRef.current.remove(duplicateCircle);
+            }
+          }
+        }
+
+        if (finalPointer) {
+          const lastPoint = points[points.length - 1];
+          lastPoint.x = finalPointer.x;
+          lastPoint.y = finalPointer.y;
+        }
+
+        if (maskDrawingRef.current.currentPolygon) {
+          maskDrawingRef.current.currentPolygon.set({
+            points: [...points],
+          });
+        }
+
+        fabricCanvasRef.current?.renderAll();
+      };
 
       const handleMouseDown = (e: any) => {
         if (canvasState?.tool === "mask" && canvasState?.selectedLayerId) {
@@ -1948,6 +2116,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         if (canvasState?.tool !== "mask") return;
 
         if (maskDrawingRef.current.isDrawing) {
+          const canvas = fabricCanvasRef.current;
+          removeTrailingDuplicatePoint(canvas?.getPointer(e.e));
           finishMask();
           return;
         }
@@ -2242,8 +2412,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
           // Store reference to mask overlay for this layer
           (fabricImg as any)._maskPolygon = maskShape;
-          configureMaskOverlay(maskShape, layer, fabricImg);
           canvas.add(maskShape);
+          configureMaskOverlay(maskShape, layer, fabricImg);
+          bringMaskHandlesToFront(fabricImg);
         }
 
         canvas.renderAll();
@@ -2335,8 +2506,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           }
 
           (fabricObj as any)._maskPolygon = maskShape;
-          configureMaskOverlay(maskShape, layer, fabricObj);
           canvas.add(maskShape);
+          configureMaskOverlay(maskShape, layer, fabricObj);
+          bringMaskHandlesToFront(fabricObj);
         }
 
         // Use requestAnimationFrame to batch renders
