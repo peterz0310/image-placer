@@ -975,7 +975,7 @@ export default function ImagePlacer() {
     const clamped = Math.min(Math.max(nextZoom, ZOOM_MIN), ZOOM_MAX);
     setCanvasState((prev) => ({
       ...prev,
-      zoom: Number(clamped.toFixed(2)),
+      zoom: Number(clamped.toFixed(4)),
     }));
   }, []);
 
@@ -1850,6 +1850,9 @@ export default function ImagePlacer() {
                 }}
                 onMaskStateChange={setMaskDrawingState}
                 onPanChange={handlePanChange}
+                onZoomChange={handleZoomChange}
+                minZoom={ZOOM_MIN}
+                maxZoom={ZOOM_MAX}
               />
             </div>
           ) : (

@@ -31,6 +31,9 @@ interface FabricCanvasProps {
     pointCount: number;
   }) => void;
   onPanChange?: (pan: { x: number; y: number }) => void;
+  onZoomChange?: (zoom: number) => void;
+  minZoom?: number;
+  maxZoom?: number;
 }
 
 export interface FabricCanvasRef {
@@ -56,6 +59,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       onLayerSelected,
       onMaskStateChange,
       onPanChange,
+      onZoomChange,
+      minZoom,
+      maxZoom,
     },
     ref
   ) => {
@@ -90,6 +96,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       defaultCursor: string;
       hoverCursor: string;
     } | null>(null);
+    const skipCanvasStateSyncRef = useRef(0);
 
     const lastProjectRef = useRef<{
       baseImageData: string | undefined;
@@ -106,7 +113,10 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       y: Number(pan.y.toFixed(PAN_PRECISION)),
     });
 
-    const pansAreClose = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    const pansAreClose = (
+      a: { x: number; y: number },
+      b: { x: number; y: number }
+    ) => {
       return (
         Math.abs(a.x - b.x) < PAN_EPSILON && Math.abs(a.y - b.y) < PAN_EPSILON
       );
@@ -491,7 +501,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
       handle.set({ fill: MASK_HANDLE_SELECTED_COLOR });
       (handle as any)._isSelectedMaskHandle = true;
-      (handle as any).bringToFront?.();
+      if (canvas && canvas.bringObjectToFront) {
+        canvas.bringObjectToFront(handle);
+      }
       canvas?.requestRenderAll();
     };
 
@@ -596,7 +608,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       }
 
       handles.forEach((handle) => {
-        handle.bringToFront?.();
+        if (canvas.bringObjectToFront) {
+          canvas.bringObjectToFront(handle);
+        }
       });
 
       canvas.requestRenderAll();
@@ -687,7 +701,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         handle.on("mouseup", commit);
 
         canvas.add(handle);
-        (handle as any).bringToFront?.();
+        if (canvas.bringObjectToFront) {
+          canvas.bringObjectToFront(handle);
+        }
         return handle;
       });
 
@@ -919,10 +935,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       maskShape.borderScaleFactor = 0.5;
       const inMaskMode = canvasState?.tool === "mask";
       const allowMaskDrag =
-        inMaskMode &&
-        !layer.locked &&
-        layer.mask.enabled &&
-        layer.mask.visible;
+        inMaskMode && !layer.locked && layer.mask.enabled && layer.mask.visible;
       maskShape.hoverCursor = layer.locked
         ? "not-allowed"
         : allowMaskDrag
@@ -1400,6 +1413,13 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const zoomChanged = Math.abs(currentZoom - nextZoom) > ZOOM_EPSILON;
       const panChanged = !pansAreClose(currentPan, nextPan);
 
+      if (skipCanvasStateSyncRef.current > 0) {
+        skipCanvasStateSyncRef.current -= 1;
+        canvasZoomRef.current = nextZoom;
+        canvasPanRef.current = normalizePan(nextPan);
+        return;
+      }
+
       if (!zoomChanged && !panChanged) {
         return;
       }
@@ -1428,6 +1448,84 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       canvasPanRef.current = normalizePan(effectivePan);
       applyZoomAndPanToCanvas(canvas, nextZoom, canvasPanRef.current);
     }, [canvasState?.zoom, canvasState?.pan, onPanChange]);
+
+    useEffect(() => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+      if (!onZoomChange) return;
+
+      const minZoomValue = Math.max(minZoom ?? 0.25, 0.05);
+      const maxZoomValue = Math.max(maxZoom ?? 4, minZoomValue);
+
+      const handleWheel = (opt: any) => {
+        const event = opt?.e as WheelEvent | undefined;
+        const activeCanvas = fabricCanvasRef.current;
+        if (!event || !activeCanvas) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const currentZoom = canvasZoomRef.current ?? activeCanvas.getZoom();
+        const currentPan =
+          canvasPanRef.current ?? getPanFromViewport(activeCanvas);
+
+        const sensitivity = event.ctrlKey ? 0.02 : 0.0015;
+        const zoomFactor = Math.exp(-event.deltaY * sensitivity);
+        let nextZoom = currentZoom * zoomFactor;
+        nextZoom = Math.min(Math.max(nextZoom, minZoomValue), maxZoomValue);
+
+        if (Math.abs(nextZoom - currentZoom) < ZOOM_EPSILON) {
+          return;
+        }
+
+        const rect = activeCanvas.upperCanvasEl?.getBoundingClientRect();
+        if (!rect) {
+          return;
+        }
+
+        const pointerX = event.clientX - rect.left;
+        const pointerY = event.clientY - rect.top;
+
+        const baseCurrent = getBaseTranslation(activeCanvas, currentZoom);
+        const translateCurrentX = baseCurrent.x + currentPan.x;
+        const translateCurrentY = baseCurrent.y + currentPan.y;
+
+        const worldX = (pointerX - translateCurrentX) / currentZoom;
+        const worldY = (pointerY - translateCurrentY) / currentZoom;
+
+        const baseNext = getBaseTranslation(activeCanvas, nextZoom);
+        const translateNextX = pointerX - worldX * nextZoom;
+        const translateNextY = pointerY - worldY * nextZoom;
+
+        const nextPanRaw = {
+          x: translateNextX - baseNext.x,
+          y: translateNextY - baseNext.y,
+        };
+
+        const normalizedNextPan = normalizePan(nextPanRaw);
+
+        canvasZoomRef.current = nextZoom;
+        canvasPanRef.current = normalizedNextPan;
+
+        applyZoomAndPanToCanvas(activeCanvas, nextZoom, normalizedNextPan);
+
+        if (onPanChange && !pansAreClose(normalizedNextPan, currentPan)) {
+          skipCanvasStateSyncRef.current += 1;
+          onPanChange(normalizedNextPan);
+        }
+
+        skipCanvasStateSyncRef.current += 1;
+        onZoomChange(nextZoom);
+      };
+
+      canvas.on("mouse:wheel", handleWheel);
+
+      return () => {
+        canvas.off("mouse:wheel", handleWheel);
+      };
+    }, [minZoom, maxZoom, onPanChange, onZoomChange]);
 
     useEffect(() => {
       const canvas = fabricCanvasRef.current;
@@ -1482,7 +1580,10 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         }
 
         const clientEvent = event as MouseEvent | PointerEvent;
-        if (clientEvent.clientX === undefined || clientEvent.clientY === undefined) {
+        if (
+          clientEvent.clientX === undefined ||
+          clientEvent.clientY === undefined
+        ) {
           return null;
         }
 
@@ -1533,7 +1634,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
         window.addEventListener("mousemove", handleWindowMouseMove);
         window.addEventListener("mouseup", handleWindowMouseUp);
-        window.addEventListener("touchmove", handleWindowTouchMove, { passive: false });
+        window.addEventListener("touchmove", handleWindowTouchMove, {
+          passive: false,
+        });
         window.addEventListener("touchend", handleWindowTouchEnd);
       };
 
@@ -1740,7 +1843,10 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             if (allowMaskDrag && layerId) {
               const layerObject = canvas
                 .getObjects()
-                .find((candidate) => objectLayerMapRef.current.get(candidate) === layerId);
+                .find(
+                  (candidate) =>
+                    objectLayerMapRef.current.get(candidate) === layerId
+                );
               if (layerObject) {
                 bringMaskHandlesToFront(layerObject);
               }
@@ -1946,7 +2052,10 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const canvas = fabricCanvasRef.current;
       if (!canvas) return;
 
-      const removeTrailingDuplicatePoint = (finalPointer?: { x: number; y: number }) => {
+      const removeTrailingDuplicatePoint = (finalPointer?: {
+        x: number;
+        y: number;
+      }) => {
         if (!maskDrawingRef.current.isDrawing) return;
         const points = maskDrawingRef.current.points;
         if (points.length === 0) return;
