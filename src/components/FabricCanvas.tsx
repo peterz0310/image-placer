@@ -85,8 +85,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
     const previousInteractionStateRef = useRef<{
       skipTargetFind: boolean;
       selection: boolean;
-      defaultCursor: string | undefined;
-      hoverCursor: string | undefined;
+      defaultCursor: string;
+      hoverCursor: string;
     } | null>(null);
 
     const lastProjectRef = useRef<{
@@ -2134,7 +2134,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       // Add base image as background
       if (project.base.imageData) {
         try {
-          console.log("Loading base image...");
           const img = await loadImageFromDataURL(project.base.imageData);
           const fabricImage = new FabricImage(img, {
             scaleX: scale,
@@ -2143,7 +2142,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             originY: "top",
           });
           canvas.backgroundImage = fabricImage;
-          console.log("Background image set, rendering...");
           canvas.renderAll();
         } catch (error) {
           console.error("Error loading base image:", error);
@@ -2386,9 +2384,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
       if (fabricObj) {
         canvas.setActiveObject(fabricObj);
-        console.log(`Selected fabric object for layer: ${layerId}`);
-      } else {
-        console.log(`No fabric object found for layer: ${layerId}`);
       }
 
       canvas.renderAll();
@@ -2404,7 +2399,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         format: "png" as const,
         quality: 1.0,
         multiplier: scale,
-        withoutTransform: true,
       });
     };
 
@@ -2427,11 +2421,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         const img = new Image();
 
         img.onload = () => {
-          console.log("Image loaded successfully:", {
-            width: img.width,
-            height: img.height,
-            src: dataURL.substring(0, 50) + "...",
-          });
           resolve(img);
         };
 

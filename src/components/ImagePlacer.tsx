@@ -12,6 +12,7 @@ import { useHistory, useHistoryKeyboard } from "@/hooks/useHistory";
 import JSZip from "jszip";
 import { v4 as uuidv4 } from "uuid";
 import {
+  type LucideIcon,
   Upload,
   FolderOpen,
   RotateCcw,
@@ -29,14 +30,116 @@ import {
   X,
   Layers,
   Square,
+  Lightbulb,
+  Keyboard,
+  LifeBuoy,
 } from "lucide-react";
 
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 4;
 const ZOOM_STEP = 0.1;
 
+type WelcomeCallout = {
+  icon: LucideIcon;
+  iconColor: string;
+  title: string;
+  description: string;
+  bullets?: string[];
+};
+
+type QuickStartItem = {
+  title: string;
+  description: string;
+};
+
+const WELCOME_CALLOUTS: WelcomeCallout[] = [
+  {
+    icon: Upload,
+    iconColor: "text-blue-500",
+    title: "Start a Project",
+    description:
+      "Choose a base image from your device or resume a saved project to jump back into editing instantly.",
+    bullets: [
+      "Supports JPG, PNG, and transparent assets",
+      "Files up to 50 MB are accepted",
+      "Projects remember every layer and setting",
+    ],
+  },
+  {
+    icon: Move3D,
+    iconColor: "text-green-500",
+    title: "Edit with Precision",
+    description:
+      "Use the floating toolbar and layer panel to position, mask, and blend overlays with pixel-perfect accuracy.",
+    bullets: [
+      "Transform layers with move, rotate, scale, and skew tools",
+      "Draw reusable polygon masks with adjustable smoothing",
+      "Tag layers to keep complex mockups organized",
+    ],
+  },
+  {
+    icon: Archive,
+    iconColor: "text-orange-500",
+    title: "Deliver Ready-to-Share Mockups",
+    description:
+      "Export layered project archives that bundle the composite render, source assets, and project JSON.",
+    bullets: [
+      "Re-open exports to continue editing",
+      "Share templates across teams and devices",
+      "Normalized scaling keeps layouts consistent",
+    ],
+  },
+];
+
+const QUICK_START_ITEMS: QuickStartItem[] = [
+  {
+    title: "Upload a base image",
+    description:
+      "The canvas will resize automatically and unlock layer tools once a background is loaded.",
+  },
+  {
+    title: "Add overlay layers",
+    description:
+      "Drop in product renders, logos, decals, or artwork to build your composition.",
+  },
+  {
+    title: "Fine-tune every detail",
+    description:
+      "Use the properties panel for numeric adjustments and the canvas handles for quick visual tweaks.",
+  },
+  {
+    title: "Export when ready",
+    description:
+      "Download a ZIP archive that includes your project file, composite preview, and original assets.",
+  },
+];
+
+const KEYBOARD_SHORTCUTS: QuickStartItem[] = [
+  {
+    title: "Undo / Redo",
+    description: "Cmd/Ctrl + Z and Cmd/Ctrl + Shift + Z",
+  },
+  {
+    title: "Delete Layer",
+    description: "Backspace or Delete",
+  },
+  {
+    title: "Toggle Mask Mode",
+    description: "Press M while a layer is selected",
+  },
+  {
+    title: "Reset Canvas Zoom",
+    description: "Double-click the zoom indicator in the toolbar",
+  },
+];
+
+const SUPPORT_TIPS = [
+  "Need precise alignment? Hold Shift while dragging for constrained movement.",
+  "Mask edits are non-destructive—switch tools anytime without losing your path.",
+  "Projects auto-save to the in-app history so you can explore ideas freely.",
+];
+
 export default function ImagePlacer() {
-  // Initialize history system
   const {
     canUndo,
     canRedo,
@@ -49,21 +152,17 @@ export default function ImagePlacer() {
     getCurrentProject: () => Project | null;
   };
 
-  // Get project from history or use local state as fallback
   const historyProject = getCurrentProject();
   const [localProject, setLocalProject] = useState<Project | null>(null);
 
-  // Use history project if available, otherwise use local project
   const project = historyProject !== null ? historyProject : localProject;
 
-  // Sync local project when history changes
   useEffect(() => {
     if (historyProject !== null) {
       setLocalProject(historyProject);
     }
   }, [historyProject]);
 
-  // Sync tagInputs when project changes (for loading projects, undo/redo, etc.)
   useEffect(() => {
     if (project?.layers) {
       const newTagInputs: Record<string, string> = {};
@@ -93,13 +192,10 @@ export default function ImagePlacer() {
   const [error, setError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
-  // Local state for tag inputs to avoid performance issues
   const [tagInputs, setTagInputs] = useState<Record<string, string>>({});
 
-  // Refs for debouncing tag updates
   const tagUpdateTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
 
-  // Enable keyboard shortcuts for undo/redo
   useHistoryKeyboard(undo, redo, canUndo, canRedo);
 
   /**
@@ -1682,62 +1778,118 @@ export default function ImagePlacer() {
               onPanChange={handlePanChange}
             />
           ) : (
-            <div className="text-center text-gray-500 max-w-md mx-auto p-8">
-              <div className="flex justify-center mb-6">
+            <div className="max-w-3xl mx-auto p-10 text-gray-600">
+              <div className="flex flex-col items-center text-center gap-4">
                 <div className="relative">
-                  <ImageIcon size={64} className="text-gray-300" />
+                  <ImageIcon size={72} className="text-gray-300" />
                   <Layers
-                    size={24}
+                    size={28}
                     className="text-blue-400 absolute -bottom-1 -right-1"
                   />
                 </div>
-              </div>
-              <h1 className="text-2xl mb-4 font-bold text-gray-800">
-                Welcome to Image Placer
-              </h1>
-              <p className="text-base mb-6 text-gray-600 leading-relaxed">
-                Create stunning compositions by layering images with precision
-                tools for transformation, masking, and positioning.
-              </p>
-
-              <div className="text-left space-y-4 mb-8">
-                <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-                  <h3 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
-                    <Upload size={16} className="text-blue-500" />
-                    Getting Started
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    Load a base image to start your project, then add overlay
-                    images as layers.
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-900">
+                    Welcome to Image Placer
+                  </h1>
+                  <p className="mt-3 text-base leading-relaxed max-w-2xl">
+                    Compose realistic product visuals, nail art previews, and
+                    device mockups by stacking editable layers on a single
+                    canvas. The interface guides you from the first upload to a
+                    production-ready export.
                   </p>
                 </div>
+              </div>
 
-                <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-                  <h3 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
-                    <Move3D size={16} className="text-green-500" />
-                    Features
+              <div className="mt-10 grid gap-4 md:grid-cols-3">
+                {WELCOME_CALLOUTS.map((callout) => {
+                  const Icon = callout.icon;
+                  return (
+                    <div
+                      key={callout.title}
+                      className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`flex h-10 w-10 items-center justify-center rounded-full bg-gray-50 ${callout.iconColor}`}
+                        >
+                          <Icon size={20} />
+                        </span>
+                        <h3 className="font-semibold text-gray-900">
+                          {callout.title}
+                        </h3>
+                      </div>
+                      <p className="mt-3 text-sm leading-relaxed">
+                        {callout.description}
+                      </p>
+                      {callout.bullets && (
+                        <ul className="mt-3 space-y-1 text-sm text-gray-500">
+                          {callout.bullets.map((bullet) => (
+                            <li key={bullet} className="flex gap-2">
+                              <span aria-hidden="true">•</span>
+                              <span>{bullet}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-10 grid gap-6 md:grid-cols-2">
+                <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                  <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Lightbulb size={18} className="text-amber-500" />
+                    Quick start checklist
                   </h3>
-                  <ul className="text-sm text-gray-600 space-y-1">
-                    <li>• Transform layers (move, scale, rotate, skew)</li>
-                    <li>• Create custom masks for precise control</li>
-                    <li>• Adjust opacity and layer visibility</li>
-                    <li>• Export high-quality compositions</li>
+                  <ol className="mt-4 space-y-3 text-sm text-gray-600 list-decimal list-inside">
+                    {QUICK_START_ITEMS.map((item) => (
+                      <li key={item.title}>
+                        <span className="font-medium text-gray-800">
+                          {item.title}
+                        </span>
+                        <p className="mt-1 text-gray-600">{item.description}</p>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+
+                <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                  <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                    <Keyboard size={18} className="text-blue-500" />
+                    Keyboard shortcuts
+                  </h3>
+                  <ul className="mt-4 space-y-3 text-sm text-gray-600">
+                    {KEYBOARD_SHORTCUTS.map((shortcut) => (
+                      <li key={shortcut.title} className="flex flex-col">
+                        <span className="font-medium text-gray-800">
+                          {shortcut.title}
+                        </span>
+                        <span className="mt-0.5 text-gray-600">
+                          {shortcut.description}
+                        </span>
+                      </li>
+                    ))}
                   </ul>
                 </div>
-
-                <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-                  <h3 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
-                    <Archive size={16} className="text-orange-500" />
-                    Project Management
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    Save your work as project files and resume editing anytime
-                    with full layer preservation.
-                  </p>
-                </div>
               </div>
 
-              <div className="flex gap-3 justify-center">
+              <div className="mt-6 bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                  <LifeBuoy size={18} className="text-emerald-500" />
+                  Tips for better results
+                </h3>
+                <ul className="mt-4 space-y-2 text-sm text-gray-600">
+                  {SUPPORT_TIPS.map((tip) => (
+                    <li key={tip} className="flex gap-2">
+                      <span aria-hidden="true">•</span>
+                      <span>{tip}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="mt-8 flex flex-wrap justify-center gap-3">
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
@@ -1747,10 +1899,10 @@ export default function ImagePlacer() {
                 </button>
                 <button
                   onClick={() => projectInputRef.current?.click()}
-                  className="px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
+                  className="px-6 py-3 bg-gray-700 hover:bg-gray-800 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
                 >
                   <FolderOpen size={18} />
-                  Load Project
+                  Load Saved Project
                 </button>
               </div>
             </div>
