@@ -191,10 +191,14 @@ export default function ImagePlacer() {
 
   const [error, setError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   const [tagInputs, setTagInputs] = useState<Record<string, string>>({});
 
   const tagUpdateTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
+  const previewGenerationRef = useRef<symbol | null>(null);
 
   useHistoryKeyboard(undo, redo, canUndo, canRedo);
 
@@ -870,12 +874,69 @@ export default function ImagePlacer() {
     });
   };
 
+  const closePreview = useCallback(() => {
+    previewGenerationRef.current = null;
+    if (previewImageUrl) {
+      URL.revokeObjectURL(previewImageUrl);
+      objectURLsRef.current.delete(previewImageUrl);
+    }
+    setPreviewImageUrl(null);
+    setIsGeneratingPreview(false);
+    setIsPreviewOpen(false);
+  }, [previewImageUrl]);
+
+  const openPreview = useCallback(async () => {
+    if (!project || previewGenerationRef.current) return;
+
+    setError(null);
+    setIsPreviewOpen(true);
+
+    const token = Symbol("preview-request");
+    previewGenerationRef.current = token;
+    setIsGeneratingPreview(true);
+
+    if (previewImageUrl) {
+      URL.revokeObjectURL(previewImageUrl);
+      objectURLsRef.current.delete(previewImageUrl);
+      setPreviewImageUrl(null);
+    }
+
+    try {
+      const compositeBlob = await renderComposite(project, 1);
+      const url = URL.createObjectURL(compositeBlob);
+
+      if (previewGenerationRef.current !== token) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+
+      objectURLsRef.current.add(url);
+      setPreviewImageUrl(url);
+    } catch (error) {
+      console.error("Error generating preview:", error);
+      if (previewGenerationRef.current === token) {
+        setError(
+          `Failed to generate preview: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`
+        );
+        setIsPreviewOpen(false);
+      }
+    } finally {
+      if (previewGenerationRef.current === token) {
+        previewGenerationRef.current = null;
+        setIsGeneratingPreview(false);
+      }
+    }
+  }, [project, previewImageUrl]);
+
   const resetProject = () => {
     if (
       confirm(
         "Are you sure you want to start over? This will clear all your work."
       )
     ) {
+      closePreview();
       setLocalProject(null);
       clearHistory();
       saveState(null, "Reset project");
@@ -960,6 +1021,18 @@ export default function ImagePlacer() {
             </>
           ) : (
             <>
+              <button
+                onClick={openPreview}
+                disabled={isGeneratingPreview}
+                className={`px-4 py-2 rounded text-sm flex items-center gap-2 transition-colors ${
+                  isGeneratingPreview
+                    ? "bg-indigo-400 cursor-not-allowed"
+                    : "bg-indigo-600 hover:bg-indigo-700"
+                }`}
+              >
+                <Eye size={16} />
+                {isGeneratingPreview ? "Generating..." : "Preview"}
+              </button>
               <button
                 onClick={exportProjectZIP}
                 disabled={isExporting}
@@ -2026,6 +2099,56 @@ export default function ImagePlacer() {
           </div>
         )}
       </div>
+
+      {isPreviewOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={closePreview}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-full flex flex-col"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">
+                  Composite Preview
+                </h2>
+                {project && (
+                  <p className="text-sm text-gray-500">
+                    {project.base.width} × {project.base.height} PNG render
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={closePreview}
+                className="text-gray-500 hover:text-gray-700"
+                aria-label="Close preview"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 overflow-auto flex-1 flex items-center justify-center bg-gray-100">
+              {isGeneratingPreview ? (
+                <div className="text-gray-600 text-sm">Generating preview...</div>
+              ) : previewImageUrl ? (
+                <NextImage
+                  src={previewImageUrl}
+                  alt="Composite preview"
+                  width={Math.max(1, project?.base.width ?? 1)}
+                  height={Math.max(1, project?.base.height ?? 1)}
+                  unoptimized
+                  className="max-w-full max-h-[70vh] w-auto object-contain shadow-md border"
+                />
+              ) : (
+                <div className="text-gray-600 text-sm">
+                  Preview unavailable. Try again.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
