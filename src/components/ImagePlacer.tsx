@@ -55,62 +55,62 @@ type QuickStartItem = {
 const WELCOME_CALLOUTS: WelcomeCallout[] = [
   {
     icon: Upload,
-    iconColor: "text-blue-500",
-    title: "Start a Project",
+    iconColor: "text-sky-500",
+    title: "Bring in your visuals",
     description:
-      "Choose a base image from your device or resume a saved project to jump back into editing instantly.",
+      "Import backgrounds, supporting artwork, or mockups from your library while keeping every layer editable.",
     bullets: [
-      "Supports JPG, PNG, and transparent assets",
-      "Files up to 50 MB are accepted",
-      "Projects remember every layer and setting",
+      "Works with product shots, UI frames, textures, and more",
+      "Transparent assets stay intact for compositing",
+      "Projects reopen exactly where you left off",
     ],
   },
   {
     icon: Move3D,
-    iconColor: "text-green-500",
-    title: "Edit with Precision",
+    iconColor: "text-emerald-500",
+    title: "Arrange every layer with control",
     description:
-      "Use the floating toolbar and layer panel to position, mask, and blend overlays with pixel-perfect accuracy.",
+      "Move, transform, and mask elements using familiar tools so compositions come together quickly.",
     bullets: [
-      "Transform layers with move, rotate, scale, and skew tools",
-      "Draw reusable polygon masks with adjustable smoothing",
-      "Tag layers to keep complex mockups organized",
+      "Drag, resize, and align directly on the canvas",
+      "Switch between standard and skew transforms when perspective is needed",
+      "Mask any layer to fine-tune focus and balance",
     ],
   },
   {
     icon: Archive,
     iconColor: "text-orange-500",
-    title: "Deliver Ready-to-Share Mockups",
+    title: "Share polished outputs",
     description:
-      "Export layered project archives that bundle the composite render, source assets, and project JSON.",
+      "Export flattened previews or save the full project package whenever you need to hand off or iterate.",
     bullets: [
-      "Re-open exports to continue editing",
-      "Share templates across teams and devices",
-      "Normalized scaling keeps layouts consistent",
+      "Render composites for quick approvals",
+      "Bundle source layers and project data for collaborators",
+      "Keep brand layouts consistent across versions",
     ],
   },
 ];
 
 const QUICK_START_ITEMS: QuickStartItem[] = [
   {
-    title: "Upload a base image",
+    title: "Drop in a background",
     description:
-      "The canvas will resize automatically and unlock layer tools once a background is loaded.",
+      "Choose the foundation for your scene so every new element has the right context.",
   },
   {
-    title: "Add overlay layers",
+    title: "Stack supporting artwork",
     description:
-      "Drop in product renders, logos, decals, or artwork to build your composition.",
+      "Add logos, screenshots, or renders as separate layers to build the story.",
   },
   {
-    title: "Fine-tune every detail",
+    title: "Shape the focus",
     description:
-      "Use the properties panel for numeric adjustments and the canvas handles for quick visual tweaks.",
+      "Mask, blend, and align pieces until the composition feels balanced.",
   },
   {
-    title: "Export when ready",
+    title: "Export variations",
     description:
-      "Download a ZIP archive that includes your project file, composite preview, and original assets.",
+      "Save a composite image or the full project package whenever you need a new version.",
   },
 ];
 
@@ -134,9 +134,9 @@ const KEYBOARD_SHORTCUTS: QuickStartItem[] = [
 ];
 
 const SUPPORT_TIPS = [
-  "Need precise alignment? Hold Shift while dragging for constrained movement.",
-  "Mask edits are non-destructive—switch tools anytime without losing your path.",
-  "Projects auto-save to the in-app history so you can explore ideas freely.",
+  "Name or tag related layers so feedback rounds stay organized.",
+  "Reset the zoom whenever you need a quick full-canvas check.",
+  "Duplicate promising variations before you head down a new path.",
 ];
 
 export default function ImagePlacer() {
@@ -1784,7 +1784,7 @@ export default function ImagePlacer() {
         )}
 
         {/* Canvas Area */}
-        <div className="flex-1 bg-gray-50 flex items-center justify-center relative">
+        <div className="flex-1 bg-gray-50 relative">
           {project && (
             <FloatingToolbar
               tool={canvasState.tool}
@@ -1825,158 +1825,160 @@ export default function ImagePlacer() {
             />
           )}
           {project ? (
-            <FabricCanvas
-              ref={fabricCanvasRef}
-              project={project}
-              onLayerUpdate={handleLayerUpdate}
-              selectedLayerId={canvasState.selectedLayerId}
-              transformMode={canvasState.transformMode}
-              canvasState={canvasState}
-              onMaskFinished={() => {
-                // Switch back to transform mode when mask drawing is finished
-                setCanvasState((prev) => ({
-                  ...prev,
-                  tool: "select",
-                }));
-              }}
-              onLayerSelected={(layerId) => {
-                // When a layer is selected on canvas, update the layer selection and switch to transform mode
-                setCanvasState((prev) => ({
-                  ...prev,
-                  selectedLayerId: layerId,
-                  tool: "select",
-                }));
-              }}
-              onMaskStateChange={setMaskDrawingState}
-              onPanChange={handlePanChange}
-            />
+            <div className="h-full w-full flex items-center justify-center">
+              <FabricCanvas
+                ref={fabricCanvasRef}
+                project={project}
+                onLayerUpdate={handleLayerUpdate}
+                selectedLayerId={canvasState.selectedLayerId}
+                transformMode={canvasState.transformMode}
+                canvasState={canvasState}
+                onMaskFinished={() => {
+                  // Switch back to transform mode when mask drawing is finished
+                  setCanvasState((prev) => ({
+                    ...prev,
+                    tool: "select",
+                  }));
+                }}
+                onLayerSelected={(layerId) => {
+                  // When a layer is selected on canvas, update the layer selection and switch to transform mode
+                  setCanvasState((prev) => ({
+                    ...prev,
+                    selectedLayerId: layerId,
+                    tool: "select",
+                  }));
+                }}
+                onMaskStateChange={setMaskDrawingState}
+                onPanChange={handlePanChange}
+              />
+            </div>
           ) : (
-            <div className="max-w-3xl mx-auto p-10 text-gray-600">
-              <div className="flex flex-col items-center text-center gap-4">
-                <div className="relative">
-                  <ImageIcon size={72} className="text-gray-300" />
-                  <Layers
-                    size={28}
-                    className="text-blue-400 absolute -bottom-1 -right-1"
-                  />
+            <div className="h-full overflow-y-auto">
+              <div className="max-w-3xl mx-auto px-6 py-12 text-gray-600">
+                <div className="flex flex-col items-center text-center gap-4">
+                  <div className="relative">
+                    <ImageIcon size={72} className="text-gray-300" />
+                    <Layers
+                      size={28}
+                      className="text-blue-400 absolute -bottom-1 -right-1"
+                    />
+                  </div>
+                  <div>
+                    <h1 className="text-3xl font-bold text-gray-900">
+                      Welcome to Image Placer
+                    </h1>
+                    <p className="mt-3 text-base leading-relaxed max-w-2xl">
+                      Layer graphics, refine compositions, and export ready-to-share visuals without leaving the browser.
+                      Explore the tools in whatever order fits your workflow.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h1 className="text-3xl font-bold text-gray-900">
-                    Welcome to Image Placer
-                  </h1>
-                  <p className="mt-3 text-base leading-relaxed max-w-2xl">
-                    Compose realistic product visuals, nail art previews, and
-                    device mockups by stacking editable layers on a single
-                    canvas. The interface guides you from the first upload to a
-                    production-ready export.
-                  </p>
-                </div>
-              </div>
 
-              <div className="mt-10 grid gap-4 md:grid-cols-3">
-                {WELCOME_CALLOUTS.map((callout) => {
-                  const Icon = callout.icon;
-                  return (
-                    <div
-                      key={callout.title}
-                      className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`flex h-10 w-10 items-center justify-center rounded-full bg-gray-50 ${callout.iconColor}`}
-                        >
-                          <Icon size={20} />
-                        </span>
-                        <h3 className="font-semibold text-gray-900">
-                          {callout.title}
-                        </h3>
+                <div className="mt-10 grid gap-4 md:grid-cols-3">
+                  {WELCOME_CALLOUTS.map((callout) => {
+                    const Icon = callout.icon;
+                    return (
+                      <div
+                        key={callout.title}
+                        className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span
+                            className={`flex h-10 w-10 items-center justify-center rounded-full bg-gray-50 ${callout.iconColor}`}
+                          >
+                            <Icon size={20} />
+                          </span>
+                          <h3 className="font-semibold text-gray-900">
+                            {callout.title}
+                          </h3>
+                        </div>
+                        <p className="mt-3 text-sm leading-relaxed">
+                          {callout.description}
+                        </p>
+                        {callout.bullets && (
+                          <ul className="mt-3 space-y-1 text-sm text-gray-500">
+                            {callout.bullets.map((bullet) => (
+                              <li key={bullet} className="flex gap-2">
+                                <span aria-hidden="true">•</span>
+                                <span>{bullet}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </div>
-                      <p className="mt-3 text-sm leading-relaxed">
-                        {callout.description}
-                      </p>
-                      {callout.bullets && (
-                        <ul className="mt-3 space-y-1 text-sm text-gray-500">
-                          {callout.bullets.map((bullet) => (
-                            <li key={bullet} className="flex gap-2">
-                              <span aria-hidden="true">•</span>
-                              <span>{bullet}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="mt-10 grid gap-6 md:grid-cols-2">
-                <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                  <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                    <Lightbulb size={18} className="text-amber-500" />
-                    Quick start checklist
-                  </h3>
-                  <ol className="mt-4 space-y-3 text-sm text-gray-600 list-decimal list-inside">
-                    {QUICK_START_ITEMS.map((item) => (
-                      <li key={item.title}>
-                        <span className="font-medium text-gray-800">
-                          {item.title}
-                        </span>
-                        <p className="mt-1 text-gray-600">{item.description}</p>
-                      </li>
-                    ))}
-                  </ol>
+                    );
+                  })}
                 </div>
 
-                <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                <div className="mt-10 grid gap-6 md:grid-cols-2">
+                  <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                    <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                      <Lightbulb size={18} className="text-amber-500" />
+                      Quick start checklist
+                    </h3>
+                    <ol className="mt-4 space-y-3 text-sm text-gray-600 list-decimal list-inside">
+                      {QUICK_START_ITEMS.map((item) => (
+                        <li key={item.title}>
+                          <span className="font-medium text-gray-800">
+                            {item.title}
+                          </span>
+                          <p className="mt-1 text-gray-600">{item.description}</p>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                    <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                      <Keyboard size={18} className="text-blue-500" />
+                      Keyboard shortcuts
+                    </h3>
+                    <ul className="mt-4 space-y-3 text-sm text-gray-600">
+                      {KEYBOARD_SHORTCUTS.map((shortcut) => (
+                        <li key={shortcut.title} className="flex flex-col">
+                          <span className="font-medium text-gray-800">
+                            {shortcut.title}
+                          </span>
+                          <span className="mt-0.5 text-gray-600">
+                            {shortcut.description}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="mt-6 bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
                   <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                    <Keyboard size={18} className="text-blue-500" />
-                    Keyboard shortcuts
+                    <LifeBuoy size={18} className="text-emerald-500" />
+                    Tips for better results
                   </h3>
-                  <ul className="mt-4 space-y-3 text-sm text-gray-600">
-                    {KEYBOARD_SHORTCUTS.map((shortcut) => (
-                      <li key={shortcut.title} className="flex flex-col">
-                        <span className="font-medium text-gray-800">
-                          {shortcut.title}
-                        </span>
-                        <span className="mt-0.5 text-gray-600">
-                          {shortcut.description}
-                        </span>
+                  <ul className="mt-4 space-y-2 text-sm text-gray-600">
+                    {SUPPORT_TIPS.map((tip) => (
+                      <li key={tip} className="flex gap-2">
+                        <span aria-hidden="true">•</span>
+                        <span>{tip}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
-              </div>
 
-              <div className="mt-6 bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                  <LifeBuoy size={18} className="text-emerald-500" />
-                  Tips for better results
-                </h3>
-                <ul className="mt-4 space-y-2 text-sm text-gray-600">
-                  {SUPPORT_TIPS.map((tip) => (
-                    <li key={tip} className="flex gap-2">
-                      <span aria-hidden="true">•</span>
-                      <span>{tip}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="mt-8 flex flex-wrap justify-center gap-3">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
-                >
-                  <Upload size={18} />
-                  Start with Base Image
-                </button>
-                <button
-                  onClick={() => projectInputRef.current?.click()}
-                  className="px-6 py-3 bg-gray-700 hover:bg-gray-800 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
-                >
-                  <FolderOpen size={18} />
-                  Load Saved Project
-                </button>
+                <div className="mt-8 flex flex-wrap justify-center gap-3 pb-4">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
+                  >
+                    <Upload size={18} />
+                    Start with Base Image
+                  </button>
+                  <button
+                    onClick={() => projectInputRef.current?.click()}
+                    className="px-6 py-3 bg-gray-700 hover:bg-gray-800 text-white rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
+                  >
+                    <FolderOpen size={18} />
+                    Load Saved Project
+                  </button>
+                </div>
               </div>
             </div>
           )}
