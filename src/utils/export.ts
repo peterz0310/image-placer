@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { Project } from "@/types";
+import { CANVAS_MAX_WIDTH, CANVAS_MAX_HEIGHT } from "@/constants/canvas";
 import { MaskRenderer } from "./mask";
 
 export interface ExportOptions {
@@ -336,8 +337,8 @@ export async function renderComposite(
 
       // Calculate the display scale factor used in FabricCanvas
       // This is needed to correctly interpret the stored transform values
-      const maxDisplayWidth = 800;
-      const maxDisplayHeight = 600;
+      const maxDisplayWidth = CANVAS_MAX_WIDTH;
+      const maxDisplayHeight = CANVAS_MAX_HEIGHT;
       const displayScale = Math.min(
         maxDisplayWidth / project.base.width,
         maxDisplayHeight / project.base.height,

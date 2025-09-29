@@ -7,6 +7,7 @@ import FabricCanvas, { FabricCanvasRef } from "./FabricCanvas";
 import LayerProperties from "./LayerProperties";
 import FloatingToolbar from "./FloatingToolbar";
 import { ProjectExporter, renderComposite } from "@/utils/export";
+import { CANVAS_MAX_WIDTH, CANVAS_MAX_HEIGHT } from "@/constants/canvas";
 import { useHistory, useHistoryKeyboard } from "@/hooks/useHistory";
 import JSZip from "jszip";
 import { v4 as uuidv4 } from "uuid";
@@ -29,6 +30,10 @@ import {
   Layers,
   Square,
 } from "lucide-react";
+
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 4;
+const ZOOM_STEP = 0.1;
 
 export default function ImagePlacer() {
   // Initialize history system
@@ -453,8 +458,8 @@ export default function ImagePlacer() {
         const initialScaleY = 0.25;
 
         // Use the same formula as the canvas update handler
-        const maxDisplayWidth = 800;
-        const maxDisplayHeight = 600;
+        const maxDisplayWidth = CANVAS_MAX_WIDTH;
+        const maxDisplayHeight = CANVAS_MAX_HEIGHT;
         const displayScale = Math.min(
           maxDisplayWidth / project.base.width,
           maxDisplayHeight / project.base.height,
@@ -808,6 +813,21 @@ export default function ImagePlacer() {
       }
     }
   };
+
+  const handleZoomChange = useCallback((nextZoom: number) => {
+    const clamped = Math.min(Math.max(nextZoom, ZOOM_MIN), ZOOM_MAX);
+    setCanvasState((prev) => ({
+      ...prev,
+      zoom: Number(clamped.toFixed(2)),
+    }));
+  }, []);
+
+  const handlePanChange = useCallback((pan: { x: number; y: number }) => {
+    setCanvasState((prev) => ({
+      ...prev,
+      pan,
+    }));
+  }, []);
 
   return (
     <div className="h-screen flex flex-col">
@@ -1628,6 +1648,11 @@ export default function ImagePlacer() {
               canRedo={canRedo}
               onUndo={undo}
               onRedo={redo}
+              zoom={canvasState.zoom}
+              onZoomChange={handleZoomChange}
+              minZoom={ZOOM_MIN}
+              maxZoom={ZOOM_MAX}
+              zoomStep={ZOOM_STEP}
             />
           )}
           {project ? (
@@ -1654,6 +1679,7 @@ export default function ImagePlacer() {
                 }));
               }}
               onMaskStateChange={setMaskDrawingState}
+              onPanChange={handlePanChange}
             />
           ) : (
             <div className="text-center text-gray-500 max-w-md mx-auto p-8">

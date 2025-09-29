@@ -11,6 +11,7 @@ import {
   Path,
 } from "fabric";
 import { Project, Layer, CanvasState } from "@/types";
+import { CANVAS_MAX_WIDTH, CANVAS_MAX_HEIGHT } from "@/constants/canvas";
 import { MaskRenderer } from "@/utils/mask";
 
 const MASK_HANDLE_COLOR = "#00a86b";
@@ -29,6 +30,7 @@ interface FabricCanvasProps {
     isDrawing: boolean;
     pointCount: number;
   }) => void;
+  onPanChange?: (pan: { x: number; y: number }) => void;
 }
 
 export interface FabricCanvasRef {
@@ -53,6 +55,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       onMaskFinished,
       onLayerSelected,
       onMaskStateChange,
+      onPanChange,
     },
     ref
   ) => {
@@ -77,10 +80,112 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       index: number;
     } | null>(null);
 
+    const canvasZoomRef = useRef<number>(1);
+    const canvasPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+    const previousInteractionStateRef = useRef<{
+      skipTargetFind: boolean;
+      selection: boolean;
+      defaultCursor: string | undefined;
+      hoverCursor: string | undefined;
+    } | null>(null);
+
     const lastProjectRef = useRef<{
       baseImageData: string | undefined;
       layerCount: number;
     }>({ baseImageData: undefined, layerCount: 0 });
+    const projectRef = useRef<Project | null>(project);
+
+    const PAN_PRECISION = 2;
+    const ZOOM_EPSILON = 0.0001;
+    const PAN_EPSILON = 0.1;
+
+    const normalizePan = (pan: { x: number; y: number }) => ({
+      x: Number(pan.x.toFixed(PAN_PRECISION)),
+      y: Number(pan.y.toFixed(PAN_PRECISION)),
+    });
+
+    const pansAreClose = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+      return (
+        Math.abs(a.x - b.x) < PAN_EPSILON && Math.abs(a.y - b.y) < PAN_EPSILON
+      );
+    };
+
+    const getBaseTranslation = (canvas: Canvas, zoom: number) => {
+      const width = canvas.getWidth();
+      const height = canvas.getHeight();
+      return {
+        x: (width / 2) * (1 - zoom),
+        y: (height / 2) * (1 - zoom),
+      };
+    };
+
+    const applyZoomAndPanToCanvas = (
+      canvas: Canvas,
+      zoomValue: number,
+      panValue?: { x: number; y: number }
+    ) => {
+      const normalizedZoom = Math.max(0.05, zoomValue || 1);
+      const baseTranslation = getBaseTranslation(canvas, normalizedZoom);
+      const pan = panValue ? normalizePan(panValue) : { x: 0, y: 0 };
+      const translateX = baseTranslation.x + pan.x;
+      const translateY = baseTranslation.y + pan.y;
+
+      canvas.setViewportTransform([
+        normalizedZoom,
+        0,
+        0,
+        normalizedZoom,
+        translateX,
+        translateY,
+      ]);
+      canvas.requestRenderAll();
+    };
+
+    const getPanFromViewport = (canvas: Canvas) => {
+      const vpt = canvas.viewportTransform;
+      if (!vpt) {
+        return { x: 0, y: 0 };
+      }
+
+      const zoom = canvas.getZoom();
+      const baseTranslation = getBaseTranslation(canvas, zoom);
+      const pan = {
+        x: vpt[4] - baseTranslation.x,
+        y: vpt[5] - baseTranslation.y,
+      };
+
+      return normalizePan(pan);
+    };
+
+    const adjustPanForZoomChange = (
+      canvas: Canvas,
+      currentZoom: number,
+      currentPan: { x: number; y: number },
+      nextZoom: number
+    ) => {
+      const width = canvas.getWidth();
+      const height = canvas.getHeight();
+      const centerX = width / 2;
+      const centerY = height / 2;
+
+      const baseCurrent = getBaseTranslation(canvas, currentZoom);
+      const translateCurrentX = baseCurrent.x + currentPan.x;
+      const translateCurrentY = baseCurrent.y + currentPan.y;
+
+      const worldCenterX = (centerX - translateCurrentX) / currentZoom;
+      const worldCenterY = (centerY - translateCurrentY) / currentZoom;
+
+      const baseNext = getBaseTranslation(canvas, nextZoom);
+      const translateNextX = centerX - worldCenterX * nextZoom;
+      const translateNextY = centerY - worldCenterY * nextZoom;
+
+      const adjustedPan = {
+        x: translateNextX - baseNext.x,
+        y: translateNextY - baseNext.y,
+      };
+
+      return normalizePan(adjustedPan);
+    };
 
     // Helper function to apply transform mode settings to a fabric object
     const applyTransformModeToObject = (obj: FabricObject, layer: Layer) => {
@@ -1010,16 +1115,27 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
     }));
 
     useEffect(() => {
+      projectRef.current = project;
+    }, [project]);
+
+    useEffect(() => {
       if (!canvasRef.current || fabricCanvasRef.current) return;
 
       const canvas = new Canvas(canvasRef.current, {
-        width: 800,
-        height: 600,
+        width: CANVAS_MAX_WIDTH,
+        height: CANVAS_MAX_HEIGHT,
         backgroundColor: "#f0f0f0",
         enableRetinaScaling: false,
       });
 
       fabricCanvasRef.current = canvas;
+      canvasZoomRef.current = Math.max(0.05, canvasState?.zoom ?? 1);
+      canvasPanRef.current = normalizePan(canvasState?.pan ?? { x: 0, y: 0 });
+      applyZoomAndPanToCanvas(
+        canvas,
+        canvasZoomRef.current,
+        canvasPanRef.current
+      );
 
       // Handle object modification events
       canvas.on("object:modified", (e) => {
@@ -1027,10 +1143,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         if (!obj) return;
 
         const layerId = objectLayerMapRef.current.get(obj);
-        if (!layerId || !project) return;
+        const currentProject = projectRef.current;
+        if (!layerId || !currentProject) return;
 
         // Find the layer to get original image dimensions
-        const layer = project.layers.find((l) => l.id === layerId);
+        const layer = currentProject.layers.find((l) => l.id === layerId);
         if (!layer) return;
 
         // Calculate normalized scale values
@@ -1047,20 +1164,20 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             // So: project.base.width * exportScale * normalizedScaleX = img.width * scaleX * (exportScale / displayScale)
             // Therefore: normalizedScaleX = (img.width * scaleX) / (project.base.width * displayScale)
 
-            const maxWidth = 800;
-            const maxHeight = 600;
+            const maxWidth = CANVAS_MAX_WIDTH;
+            const maxHeight = CANVAS_MAX_HEIGHT;
             const displayScale = Math.min(
-              maxWidth / project.base.width,
-              maxHeight / project.base.height,
+              maxWidth / currentProject.base.width,
+              maxHeight / currentProject.base.height,
               1
             );
 
             const normalizedScaleX =
               (img.width * (obj.scaleX || 1)) /
-              (project.base.width * displayScale);
+              (currentProject.base.width * displayScale);
             const normalizedScaleY =
               (img.height * (obj.scaleY || 1)) /
-              (project.base.height * displayScale);
+              (currentProject.base.height * displayScale);
 
             const normalizedTransform = {
               left: (obj.left || 0) / canvas.width,
@@ -1151,6 +1268,222 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
       updateCanvasFromProject(project);
     }, [project]);
+
+    useEffect(() => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+
+      const nextZoom = Math.max(0.05, canvasState?.zoom ?? 1);
+      const nextPan = normalizePan(canvasState?.pan ?? { x: 0, y: 0 });
+
+      const currentZoom = canvasZoomRef.current ?? 1;
+      const currentPan = canvasPanRef.current ?? { x: 0, y: 0 };
+
+      const zoomChanged = Math.abs(currentZoom - nextZoom) > ZOOM_EPSILON;
+      const panChanged = !pansAreClose(currentPan, nextPan);
+
+      if (!zoomChanged && !panChanged) {
+        return;
+      }
+
+      let effectivePan = nextPan;
+
+      if (zoomChanged) {
+        const adjustedPan = adjustPanForZoomChange(
+          canvas,
+          currentZoom,
+          currentPan,
+          nextZoom
+        );
+
+        if (!pansAreClose(adjustedPan, nextPan)) {
+          if (onPanChange) {
+            onPanChange(adjustedPan);
+          }
+          effectivePan = adjustedPan;
+        } else {
+          effectivePan = nextPan;
+        }
+      }
+
+      canvasZoomRef.current = nextZoom;
+      canvasPanRef.current = normalizePan(effectivePan);
+      applyZoomAndPanToCanvas(canvas, nextZoom, canvasPanRef.current);
+    }, [canvasState?.zoom, canvasState?.pan, onPanChange]);
+
+    useEffect(() => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+
+      if (canvasState?.tool === "pan") {
+        if (!previousInteractionStateRef.current) {
+          previousInteractionStateRef.current = {
+            skipTargetFind: canvas.skipTargetFind,
+            selection: canvas.selection,
+            defaultCursor: canvas.defaultCursor,
+            hoverCursor: canvas.hoverCursor,
+          };
+        }
+
+        canvas.skipTargetFind = true;
+        canvas.selection = false;
+        canvas.defaultCursor = "grab";
+        canvas.hoverCursor = "grab";
+        canvas.setCursor("grab");
+      } else if (previousInteractionStateRef.current) {
+        const previous = previousInteractionStateRef.current;
+        canvas.skipTargetFind = previous.skipTargetFind;
+        canvas.selection = previous.selection;
+        canvas.defaultCursor = previous.defaultCursor;
+        canvas.hoverCursor = previous.hoverCursor;
+        canvas.setCursor(previous.defaultCursor || "default");
+        previousInteractionStateRef.current = null;
+      }
+    }, [canvasState?.tool]);
+
+    useEffect(() => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+
+      let isPanning = false;
+      let lastPosition: { x: number; y: number } | null = null;
+
+      const getClientPosition = (
+        event?: MouseEvent | PointerEvent | TouchEvent
+      ): { x: number; y: number } | null => {
+        if (!event) {
+          return null;
+        }
+
+        if ("touches" in event) {
+          const activeTouch = event.touches[0] || event.changedTouches?.[0];
+          if (!activeTouch) {
+            return null;
+          }
+          return { x: activeTouch.clientX, y: activeTouch.clientY };
+        }
+
+        const clientEvent = event as MouseEvent | PointerEvent;
+        if (clientEvent.clientX === undefined || clientEvent.clientY === undefined) {
+          return null;
+        }
+
+        return { x: clientEvent.clientX, y: clientEvent.clientY };
+      };
+
+      const updatePanFromPosition = (position: { x: number; y: number }) => {
+        if (!lastPosition) {
+          return;
+        }
+
+        const deltaX = position.x - lastPosition.x;
+        const deltaY = position.y - lastPosition.y;
+
+        if (Math.abs(deltaX) < 0.01 && Math.abs(deltaY) < 0.01) {
+          return;
+        }
+
+        const currentPan = canvasPanRef.current ?? { x: 0, y: 0 };
+        const updatedPan = normalizePan({
+          x: currentPan.x + deltaX,
+          y: currentPan.y + deltaY,
+        });
+
+        canvasPanRef.current = updatedPan;
+        lastPosition = position;
+
+        applyZoomAndPanToCanvas(canvas, canvas.getZoom(), updatedPan);
+
+        if (onPanChange) {
+          onPanChange(updatedPan);
+        }
+      };
+
+      const handleMouseDown = (e: any) => {
+        if (canvasState?.tool !== "pan") return;
+
+        const event = e.e as MouseEvent | PointerEvent | TouchEvent | undefined;
+        const position = getClientPosition(event);
+        if (!position) return;
+
+        isPanning = true;
+        lastPosition = position;
+        canvas.discardActiveObject();
+        canvas.setCursor("grabbing");
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+
+        window.addEventListener("mousemove", handleWindowMouseMove);
+        window.addEventListener("mouseup", handleWindowMouseUp);
+        window.addEventListener("touchmove", handleWindowTouchMove, { passive: false });
+        window.addEventListener("touchend", handleWindowTouchEnd);
+      };
+
+      const handleMouseMove = (e: any) => {
+        if (!isPanning || canvasState?.tool !== "pan") return;
+
+        const event = e.e as MouseEvent | PointerEvent | TouchEvent | undefined;
+        const position = getClientPosition(event);
+        if (!position) return;
+
+        updatePanFromPosition(position);
+      };
+
+      const handleWindowMouseMove = (event: MouseEvent | PointerEvent) => {
+        if (!isPanning || canvasState?.tool !== "pan") return;
+        const position = getClientPosition(event);
+        if (!position) return;
+
+        updatePanFromPosition(position);
+      };
+
+      const handleWindowTouchMove = (event: TouchEvent) => {
+        if (!isPanning || canvasState?.tool !== "pan") return;
+        const position = getClientPosition(event);
+        if (!position) return;
+
+        event.preventDefault();
+        updatePanFromPosition(position);
+      };
+
+      const endPan = () => {
+        if (!isPanning) return;
+        isPanning = false;
+        lastPosition = null;
+
+        if (canvasState?.tool === "pan") {
+          canvas.setCursor("grab");
+        }
+
+        window.removeEventListener("mousemove", handleWindowMouseMove);
+        window.removeEventListener("mouseup", handleWindowMouseUp);
+        window.removeEventListener("touchmove", handleWindowTouchMove);
+        window.removeEventListener("touchend", handleWindowTouchEnd);
+      };
+
+      const handleMouseUp = () => {
+        endPan();
+      };
+
+      const handleWindowMouseUp = () => {
+        endPan();
+      };
+
+      const handleWindowTouchEnd = () => {
+        endPan();
+      };
+
+      canvas.on("mouse:down", handleMouseDown);
+      canvas.on("mouse:move", handleMouseMove);
+      canvas.on("mouse:up", handleMouseUp);
+
+      return () => {
+        canvas.off("mouse:down", handleMouseDown);
+        canvas.off("mouse:move", handleMouseMove);
+        canvas.off("mouse:up", handleMouseUp);
+        endPan();
+      };
+    }, [canvasState?.tool, onPanChange]);
 
     // Update individual layer properties when they change (with optimized dependencies)
     useEffect(() => {
@@ -1249,6 +1582,39 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               handle.visible = showHandles;
               handle.evented = showHandles;
               handle.selectable = showHandles;
+            });
+
+            const maskShape = (obj as any)._maskPolygon as
+              | FabricObject
+              | undefined;
+            if (maskShape) {
+              maskShape.evented = false;
+              maskShape.selectable = false;
+              maskShape.hoverCursor = "default";
+            }
+          } else if ((obj as any)._isMaskOverlay) {
+            obj.evented = false;
+            obj.selectable = false;
+            obj.hoverCursor = "default";
+          }
+        });
+      } else if (canvasState?.tool === "pan") {
+        canvas.selection = false;
+        canvas.defaultCursor = "grab";
+        canvas.hoverCursor = "grab";
+
+        const objects = canvas.getObjects();
+        objects.forEach((obj) => {
+          if (objectLayerMapRef.current.has(obj)) {
+            obj.selectable = false;
+            obj.evented = false;
+
+            const handles: Circle[] | undefined = (obj as any)
+              ._maskPointHandles;
+            handles?.forEach((handle) => {
+              handle.visible = false;
+              handle.evented = false;
+              handle.selectable = false;
             });
 
             const maskShape = (obj as any)._maskPolygon as
@@ -1748,8 +2114,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       });
 
       // Set canvas size based on base image dimensions
-      const maxWidth = 800;
-      const maxHeight = 600;
+      const maxWidth = CANVAS_MAX_WIDTH;
+      const maxHeight = CANVAS_MAX_HEIGHT;
       const scale = Math.min(
         maxWidth / project.base.width,
         maxHeight / project.base.height,
@@ -1790,6 +2156,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           await addLayerToCanvas(layer, scale);
         }
       }
+
+      applyZoomAndPanToCanvas(
+        canvas,
+        canvasZoomRef.current ?? 1,
+        canvasPanRef.current
+      );
     };
 
     const addLayerToCanvas = async (layer: Layer, scale: number) => {
@@ -2032,6 +2404,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         format: "png" as const,
         quality: 1.0,
         multiplier: scale,
+        withoutTransform: true,
       });
     };
 
