@@ -16,6 +16,7 @@ import {
   Upload,
   FolderOpen,
   RotateCcw,
+  FlipHorizontal,
   Plus,
   Archive,
   Move3D,
@@ -139,6 +140,78 @@ const SUPPORT_TIPS = [
   "Duplicate promising variations before you head down a new path.",
 ];
 
+const roundFraction = (value: number, precision = 5) => {
+  const factor = 10 ** precision;
+  const rounded = Math.round(value * factor) / factor;
+  return Object.is(rounded, -0) ? 0 : rounded;
+};
+
+const mirrorNormalizedX = (value: number) => {
+  return roundFraction(1 - value, 5);
+};
+
+const mirrorMask = (mask: Layer["mask"]): Layer["mask"] => {
+  const mirrorPoint = ([x, y]: [number, number]): [number, number] => [
+    Math.min(Math.max(mirrorNormalizedX(x), 0), 1),
+    roundFraction(y),
+  ];
+
+  const mirrorPathArray = (points: [number, number][]) =>
+    points.map(mirrorPoint);
+
+  const mirroredOffset = mask.offset
+    ? {
+        x: roundFraction(-(mask.offset.x ?? 0)),
+        y: roundFraction(mask.offset.y ?? 0),
+      }
+    : mask.offset;
+
+  const mirroredEditorOffset = mask.editorOffset
+    ? {
+        x: roundFraction(-(mask.editorOffset.x ?? 0)),
+        y: roundFraction(mask.editorOffset.y ?? 0),
+      }
+    : mask.editorOffset;
+
+  return {
+    ...mask,
+    path: mirrorPathArray(mask.path),
+    editorPath: mask.editorPath ? mirrorPathArray(mask.editorPath) : undefined,
+    offset: mirroredOffset,
+    editorOffset: mirroredEditorOffset,
+  };
+};
+
+const loadImageElement = (source: string): Promise<HTMLImageElement> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = (error) => {
+      console.error("Failed to load image for inversion", error);
+      reject(new Error("Unable to load image for inversion"));
+    };
+    img.src = source;
+  });
+};
+
+const mirrorDataURL = async (dataURL: string): Promise<string> => {
+  const image = await loadImageElement(dataURL);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Unable to access 2D context for inversion");
+  }
+
+  context.translate(canvas.width, 0);
+  context.scale(-1, 1);
+  context.drawImage(image, 0, 0);
+
+  return canvas.toDataURL();
+};
+
 export default function ImagePlacer() {
   const {
     canUndo,
@@ -193,6 +266,7 @@ export default function ImagePlacer() {
   const [isExporting, setIsExporting] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+  const [isInverting, setIsInverting] = useState(false);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   const [tagInputs, setTagInputs] = useState<Record<string, string>>({});
@@ -885,6 +959,85 @@ export default function ImagePlacer() {
     setIsPreviewOpen(false);
   }, [previewImageUrl]);
 
+  const invertProjectHorizontally = useCallback(async () => {
+    if (!project) {
+      return;
+    }
+
+    if (!project.base.imageData) {
+      setError("Base image is missing – cannot invert project.");
+      return;
+    }
+
+    setIsInverting(true);
+    setError(null);
+
+    try {
+      const mirroredBaseData = await mirrorDataURL(project.base.imageData);
+
+      const mirroredLayers = project.layers.map((layer) => {
+        const mirroredTransform = {
+          ...layer.transform,
+          left: Math.min(
+            Math.max(mirrorNormalizedX(layer.transform.left ?? 0.5), 0),
+            1
+          ),
+          angle: roundFraction(-(layer.transform.angle ?? 0)),
+          skewX:
+            typeof layer.transform.skewX === "number"
+              ? roundFraction(-layer.transform.skewX)
+              : layer.transform.skewX,
+          skewY:
+            typeof layer.transform.skewY === "number"
+              ? roundFraction(layer.transform.skewY)
+              : layer.transform.skewY,
+        };
+
+        return {
+          ...layer,
+          transform: mirroredTransform,
+          mask: mirrorMask(layer.mask),
+          originalFile: undefined,
+        };
+      });
+
+      const nextProject: Project = {
+        ...project,
+        base: {
+          ...project.base,
+          imageData: mirroredBaseData,
+          originalFile: undefined,
+        },
+        layers: mirroredLayers,
+        metadata: {
+          ...project.metadata,
+          modified: new Date().toISOString(),
+        },
+      };
+
+      closePreview();
+
+      updateProject(() => nextProject, "Invert project horizontally");
+
+      setCanvasState((prev) => ({
+        ...prev,
+        pan: {
+          x: prev.pan ? roundFraction(-(prev.pan.x ?? 0), 2) : 0,
+          y: prev.pan?.y ?? 0,
+        },
+      }));
+    } catch (error) {
+      console.error("Failed to invert project", error);
+      setError(
+        `Failed to invert project: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setIsInverting(false);
+    }
+  }, [project, closePreview, updateProject]);
+
   const openPreview = useCallback(async () => {
     if (!project || previewGenerationRef.current) return;
 
@@ -1032,6 +1185,18 @@ export default function ImagePlacer() {
               >
                 <Eye size={16} />
                 {isGeneratingPreview ? "Generating..." : "Preview"}
+              </button>
+              <button
+                onClick={invertProjectHorizontally}
+                disabled={isInverting}
+                className={`px-4 py-2 rounded text-sm flex items-center gap-2 transition-colors ${
+                  isInverting
+                    ? "bg-blue-400 cursor-not-allowed"
+                    : "bg-blue-600 hover:bg-blue-700"
+                }`}
+              >
+                <FlipHorizontal size={16} />
+                {isInverting ? "Inverting..." : "Invert"}
               </button>
               <button
                 onClick={exportProjectZIP}
