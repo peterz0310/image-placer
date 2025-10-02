@@ -9,12 +9,14 @@ import {
   Polygon,
   Circle,
   Path,
+  Rect,
 } from "fabric";
 import { Project, Layer, CanvasState } from "@/types";
 import { CANVAS_MAX_WIDTH, CANVAS_MAX_HEIGHT } from "@/constants/canvas";
 import { MaskRenderer } from "@/utils/mask";
 
-const MASK_HANDLE_COLOR = "#00a86b";
+const MASK_HANDLE_RADIUS = 3;
+const MASK_HANDLE_COLOR = "rgba(0, 168, 107, 0.5)";
 const MASK_HANDLE_SELECTED_COLOR = "#f97316";
 const MASK_EDGE_INSERT_THRESHOLD = 25;
 
@@ -616,13 +618,35 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       canvas.requestRenderAll();
     };
 
+    // --- Mask Transform Box State ---
+    const maskTransformBoxRef = useRef<Rect | null>(null);
+    const maskTransformLayerIdRef = useRef<string | null>(null);
+
+    const removeMaskTransformBox = (layerId?: string) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+      const box = maskTransformBoxRef.current;
+      if (!box) return;
+      if (layerId && maskTransformLayerIdRef.current !== layerId) {
+        return;
+      }
+      canvas.remove(box);
+      maskTransformBoxRef.current = null;
+      maskTransformLayerIdRef.current = null;
+      canvas.requestRenderAll();
+    };
+
     const createMaskPointHandles = (
       maskShape: FabricObject,
       layer: Layer,
       fabricObj: FabricObject
     ) => {
       const canvas = fabricCanvasRef.current;
-      if (!canvas || layer.mask.path.length === 0) return;
+      if (!canvas) return;
+      if (layer.mask.path.length === 0) {
+        removeMaskTransformBox(layer.id);
+        return;
+      }
 
       removeMaskHandles(fabricObj);
 
@@ -635,11 +659,134 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           ? selectedMaskHandleInfoRef.current
           : null;
 
+      // --- Mask Transform Box ---
+      // Only show in mask mode, not locked, and only one at a time
+      if (
+        canvasState?.tool === "mask" &&
+        !layer.locked &&
+        canvasState.selectedLayerId === layer.id
+      ) {
+        const absPoints = layer.mask.path.map(([nx, ny]) => [
+          nx * canvas.width + offX,
+          ny * canvas.height + offY,
+        ]);
+
+        let rawMinX = Infinity,
+          rawMinY = Infinity,
+          rawMaxX = -Infinity,
+          rawMaxY = -Infinity;
+        absPoints.forEach(([x, y]) => {
+          rawMinX = Math.min(rawMinX, x);
+          rawMinY = Math.min(rawMinY, y);
+          rawMaxX = Math.max(rawMaxX, x);
+          rawMaxY = Math.max(rawMaxY, y);
+        });
+
+        if (!Number.isFinite(rawMinX) || !Number.isFinite(rawMinY)) {
+          removeMaskTransformBox(layer.id);
+        } else {
+          const rawWidth = Math.max(rawMaxX - rawMinX, 1e-3);
+          const rawHeight = Math.max(rawMaxY - rawMinY, 1e-3);
+
+          removeMaskTransformBox();
+
+          const box = new Rect({
+            left: rawMinX + rawWidth / 2,
+            top: rawMinY + rawHeight / 2,
+            width: rawWidth,
+            height: rawHeight,
+            originX: "center",
+            originY: "center",
+            fill: "rgba(0,0,0,0)",
+            stroke: "rgba(0,0,0,0.15)",
+            strokeDashArray: [4, 4],
+            selectable: true,
+            evented: true,
+            hasBorders: true,
+            hasControls: true,
+            lockScalingFlip: true,
+            lockRotation: false,
+            lockScalingX: false,
+            lockScalingY: false,
+            lockMovementX: false,
+            lockMovementY: false,
+            hoverCursor: "pointer",
+            objectCaching: false,
+          });
+          box.padding = 8;
+          (box as any)._isMaskTransformBox = true;
+          (box as any)._maskLayerId = layer.id;
+
+          box.on("mousedown", (evt) => {
+            evt?.e?.stopPropagation?.();
+          });
+
+          box.on("modified", () => {
+            const canvasInstance = fabricCanvasRef.current;
+            if (!canvasInstance) return;
+
+            const scaledWidth = Math.max(
+              (box.width ?? rawWidth) * (box.scaleX ?? 1),
+              1e-6
+            );
+            const scaledHeight = Math.max(
+              (box.height ?? rawHeight) * (box.scaleY ?? 1),
+              1e-6
+            );
+            const cx = box.left ?? 0;
+            const cy = box.top ?? 0;
+            const angle = ((box.angle ?? 0) * Math.PI) / 180;
+            const cosB = Math.cos(angle);
+            const sinB = Math.sin(angle);
+
+            const origCx = rawMinX + rawWidth / 2;
+            const origCy = rawMinY + rawHeight / 2;
+
+            const newPoints: [number, number][] = absPoints.map(([x, y]) => {
+              const px = x - origCx;
+              const py = y - origCy;
+
+              const tx = (px / rawWidth) * scaledWidth;
+              const ty = (py / rawHeight) * scaledHeight;
+
+              const rx = tx * cosB - ty * sinB + cx;
+              const ry = tx * sinB + ty * cosB + cy;
+
+              const normX = (rx - offX) / canvasInstance.width;
+              const normY = (ry - offY) / canvasInstance.height;
+
+              return [Number(normX.toFixed(5)), Number(normY.toFixed(5))] as [
+                number,
+                number
+              ];
+            });
+
+            removeMaskTransformBox(layer.id);
+
+            onLayerUpdate(layer.id, {
+              mask: {
+                ...layer.mask,
+                path: newPoints,
+                editorPath: newPoints,
+              },
+            });
+          });
+
+          canvas.add(box);
+          maskTransformBoxRef.current = box;
+          maskTransformLayerIdRef.current = layer.id;
+          canvas.setActiveObject(box);
+        }
+      } else {
+        removeMaskTransformBox(layer.id);
+      }
+
+      // --- Mask Handles ---
       const handles: Circle[] = layer.mask.path.map(([nx, ny], index) => {
         const handle = new Circle({
           left: nx * canvas.width + offX,
           top: ny * canvas.height + offY,
-          radius: 6,
+          radius: MASK_HANDLE_RADIUS,
           fill: MASK_HANDLE_COLOR,
           stroke: "#ffffff",
           strokeWidth: 2,
@@ -667,7 +814,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
         const clampToCanvas = () => {
           if (!canvas) return;
-          const half = handle.radius ?? 6;
+          const radius = handle.get("radius") ?? MASK_HANDLE_RADIUS;
+          const half = radius;
           const minX = -canvas.width * 0.25;
           const maxX = canvas.width * 1.25;
           const minY = -canvas.height * 0.25;
@@ -2035,6 +2183,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         canvas.remove(circle);
       });
 
+      removeMaskTransformBox();
+
       maskDrawingRef.current = {
         isDrawing: false,
         points: [],
@@ -2103,6 +2253,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
             if ((target as any)._isMaskOverlay) {
               return; // interacting with mask overlay (offset drag)
+            }
+            if ((target as any)._isMaskTransformBox) {
+              return; // interacting with mask transform box
             }
           }
 

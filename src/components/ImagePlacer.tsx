@@ -419,6 +419,7 @@ export default function ImagePlacer() {
   );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceBaseInputRef = useRef<HTMLInputElement>(null);
   const overlayInputRef = useRef<HTMLInputElement>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
   const fabricCanvasRef = useRef<FabricCanvasRef>(null);
@@ -541,6 +542,7 @@ export default function ImagePlacer() {
             metadata: {
               created: new Date().toISOString(),
               modified: new Date().toISOString(),
+              author: undefined,
             },
           };
 
@@ -566,6 +568,87 @@ export default function ImagePlacer() {
       setError("Failed to read the selected file. Please try again.");
     };
     reader.readAsDataURL(file);
+  };
+
+  /**
+   * Handles replacing the base image but keeps all layers and masks
+   */
+  const handleReplaceBaseImage = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file || !project) return;
+
+    // Validate file type
+    if (!file.type.startsWith("image/")) {
+      setError("Please select a valid image file.");
+      return;
+    }
+
+    // Validate file size (max 50MB)
+    const maxSize = 50 * 1024 * 1024;
+    if (file.size > maxSize) {
+      setError(
+        "Image file is too large. Please select an image smaller than 50MB."
+      );
+      return;
+    }
+
+    setError(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new window.Image();
+      img.onload = () => {
+        try {
+          // Update only the base image, keep all layers and masks
+          const newBase: BaseImage = {
+            name: file.name,
+            width: img.width,
+            height: img.height,
+            imageData: e.target?.result as string,
+            originalFile: file,
+          };
+          const updatedProject: Project = {
+            ...project,
+            base: newBase,
+            metadata: {
+              created:
+                typeof project.metadata?.created === "string" &&
+                project.metadata.created
+                  ? project.metadata.created
+                  : new Date().toISOString(),
+              modified: new Date().toISOString(),
+              author: project.metadata?.author,
+            },
+          };
+          setLocalProject(updatedProject);
+          saveState(updatedProject, "Replace base image");
+          // Clear the input so the same file can be selected again
+          if (replaceBaseInputRef.current) {
+            replaceBaseInputRef.current.value = "";
+          }
+        } catch (error) {
+          setError(
+            `Failed to replace base image: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`
+          );
+        }
+      };
+      img.onerror = () => {
+        setError(
+          "Failed to load the selected image file. Please try a different image."
+        );
+      };
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => {
+      setError("Failed to read the selected file. Please try again.");
+    };
+    reader.readAsDataURL(file);
+    // Clear the input so the same file can be selected again
+    event.target.value = "";
   };
 
   /**
@@ -1010,8 +1093,13 @@ export default function ImagePlacer() {
         },
         layers: mirroredLayers,
         metadata: {
-          ...project.metadata,
+          created:
+            typeof project.metadata?.created === "string" &&
+            project.metadata.created
+              ? project.metadata.created
+              : new Date().toISOString(),
           modified: new Date().toISOString(),
+          author: project.metadata?.author,
         },
       };
 
@@ -1229,6 +1317,13 @@ export default function ImagePlacer() {
           className="hidden"
         />
         <input
+          ref={replaceBaseInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleReplaceBaseImage}
+          className="hidden"
+        />
+        <input
           ref={overlayInputRef}
           type="file"
           accept="image/*"
@@ -1298,6 +1393,14 @@ export default function ImagePlacer() {
                     <div className="font-medium text-sm text-gray-800 flex items-center gap-2">
                       <Square size={16} className="text-blue-600" />
                       Base Image
+                      <button
+                        type="button"
+                        className="ml-2 px-2 py-0.5 text-xs bg-gray-200 hover:bg-blue-600 hover:text-white rounded transition-colors"
+                        onClick={() => replaceBaseInputRef.current?.click()}
+                        title="Replace base image"
+                      >
+                        Replace
+                      </button>
                     </div>
                     <div className="text-sm text-gray-900">
                       {project.base.name}
@@ -2036,7 +2139,8 @@ export default function ImagePlacer() {
                       Welcome to Image Placer
                     </h1>
                     <p className="mt-3 text-base leading-relaxed max-w-2xl">
-                      Layer graphics, refine compositions, and export ready-to-share visuals without leaving the browser.
+                      Layer graphics, refine compositions, and export
+                      ready-to-share visuals without leaving the browser.
                       Explore the tools in whatever order fits your workflow.
                     </p>
                   </div>
@@ -2090,7 +2194,9 @@ export default function ImagePlacer() {
                           <span className="font-medium text-gray-800">
                             {item.title}
                           </span>
-                          <p className="mt-1 text-gray-600">{item.description}</p>
+                          <p className="mt-1 text-gray-600">
+                            {item.description}
+                          </p>
                         </li>
                       ))}
                     </ol>
@@ -2300,7 +2406,9 @@ export default function ImagePlacer() {
             </div>
             <div className="p-4 overflow-auto flex-1 flex items-center justify-center bg-gray-100">
               {isGeneratingPreview ? (
-                <div className="text-gray-600 text-sm">Generating preview...</div>
+                <div className="text-gray-600 text-sm">
+                  Generating preview...
+                </div>
               ) : previewImageUrl ? (
                 <NextImage
                   src={previewImageUrl}
