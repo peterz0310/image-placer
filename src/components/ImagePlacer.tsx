@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import NextImage from "next/image";
 import { Project, Layer, BaseImage, CanvasState } from "@/types";
 import FabricCanvas, { FabricCanvasRef } from "./FabricCanvas";
@@ -387,6 +387,77 @@ export default function ImagePlacer() {
     },
     [project, saveState]
   );
+
+  const allMasksAtMaxSmoothing = useMemo(() => {
+    if (!project || project.layers.length === 0) {
+      return false;
+    }
+
+    return project.layers.every((layer) => {
+      const smoothing =
+        typeof layer.mask.smoothing === "number" ? layer.mask.smoothing : 0;
+      const editorSmoothing =
+        typeof layer.mask.editorSmoothing === "number"
+          ? layer.mask.editorSmoothing
+          : smoothing;
+
+      return smoothing >= 0.999 && editorSmoothing >= 0.999;
+    });
+  }, [project]);
+
+  const handleSetAllMaskSmoothing = useCallback(() => {
+    updateProject((prev) => {
+      if (!prev || prev.layers.length === 0) {
+        return prev;
+      }
+
+      let changed = false;
+      const nextLayers = prev.layers.map((layer) => {
+        const smoothing =
+          typeof layer.mask.smoothing === "number" ? layer.mask.smoothing : 0;
+        const editorSmoothing =
+          typeof layer.mask.editorSmoothing === "number"
+            ? layer.mask.editorSmoothing
+            : smoothing;
+
+        if (smoothing >= 0.999 && editorSmoothing >= 0.999) {
+          return layer;
+        }
+
+        changed = true;
+        return {
+          ...layer,
+          mask: {
+            ...layer.mask,
+            smoothing: 1,
+            editorSmoothing: 1,
+          },
+        };
+      });
+
+      if (!changed) {
+        return prev;
+      }
+
+      const created =
+        typeof prev.metadata?.created === "string" && prev.metadata.created
+          ? prev.metadata.created
+          : new Date().toISOString();
+
+      return {
+        ...prev,
+        layers: nextLayers,
+        metadata: {
+          created,
+          modified: new Date().toISOString(),
+          author: prev.metadata?.author,
+        },
+      };
+    }, "Set all mask smoothing to 100%");
+  }, [updateProject]);
+
+  const disableGlobalSmoothingButton =
+    !project || project.layers.length === 0 || allMasksAtMaxSmoothing;
 
   /**
    * Debounced function to update layer tags without triggering canvas re-renders on every keystroke
@@ -1420,6 +1491,24 @@ export default function ImagePlacer() {
                 >
                   <Plus size={18} />
                   Add Overlay Image
+                </button>
+              </div>
+
+              {/* Global Mask Smoothing */}
+              <div className="mb-4">
+                <button
+                  type="button"
+                  onClick={handleSetAllMaskSmoothing}
+                  disabled={disableGlobalSmoothingButton}
+                  className={`w-full px-4 py-2 text-sm font-medium rounded-lg border transition-colors flex items-center justify-center gap-2 ${
+                    disableGlobalSmoothingButton
+                      ? "border-gray-200 text-gray-400 bg-gray-100 cursor-not-allowed"
+                      : "border-blue-500 text-blue-700 hover:bg-blue-50"
+                  }`}
+                  title="Set every mask's smoothing value to 100%"
+                >
+                  <Check size={16} />
+                  Smooth all masks (100%)
                 </button>
               </div>
             </div>
