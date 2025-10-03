@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
     "fabric": "^6.7.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.544.0",

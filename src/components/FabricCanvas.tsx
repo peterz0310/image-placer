@@ -10,8 +10,9 @@ import {
   Circle,
   Path,
   Rect,
+  Text,
 } from "fabric";
-import { Project, Layer, CanvasState } from "@/types";
+import { Project, Layer, CanvasState, DetectedMask } from "@/types";
 import { CANVAS_MAX_WIDTH, CANVAS_MAX_HEIGHT } from "@/constants/canvas";
 import { MaskRenderer } from "@/utils/mask";
 
@@ -36,6 +37,9 @@ interface FabricCanvasProps {
   onZoomChange?: (zoom: number) => void;
   minZoom?: number;
   maxZoom?: number;
+  detectedMasks?: DetectedMask[];
+  showDetections?: boolean;
+  onDetectionClick?: (maskId: string) => void;
 }
 
 export interface FabricCanvasRef {
@@ -64,6 +68,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       onZoomChange,
       minZoom,
       maxZoom,
+      detectedMasks = [],
+      showDetections = false,
+      onDetectionClick,
     },
     ref
   ) => {
@@ -2870,6 +2877,81 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         img.src = dataURL;
       });
     };
+
+    // Render detected masks overlay
+    useEffect(() => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+
+      // Remove any existing detection overlays
+      const existingDetections = canvas
+        .getObjects()
+        .filter((obj: any) => obj._isDetectionOverlay);
+      existingDetections.forEach((obj) => canvas.remove(obj));
+
+      if (!showDetections || detectedMasks.length === 0) {
+        canvas.renderAll();
+        return;
+      }
+
+      // Add new detection overlays
+      detectedMasks.forEach((detection) => {
+        const points = detection.path.map(([x, y]) => ({
+          x: x * canvas.width,
+          y: y * canvas.height,
+        }));
+
+        const polygon = new Polygon(points, {
+          fill: "transparent",
+          stroke: detection.color,
+          strokeWidth: 3,
+          selectable: true,
+          evented: true,
+          hoverCursor: "pointer",
+          objectCaching: false,
+        });
+
+        (polygon as any)._isDetectionOverlay = true;
+        (polygon as any)._detectionId = detection.id;
+
+        // Add click handler
+        polygon.on("mousedown", () => {
+          if (onDetectionClick) {
+            onDetectionClick(detection.id);
+          }
+        });
+
+        canvas.add(polygon);
+
+        // Add confidence label
+        const bbox = detection.bbox;
+        const labelText = `${(detection.confidence * 100).toFixed(0)}%`;
+        const text = new Text(labelText, {
+          left: (bbox.x + bbox.w / 2) * canvas.width,
+          top: bbox.y * canvas.height - 20,
+          fontSize: 14,
+          fill: "#ffffff",
+          backgroundColor: detection.color,
+          padding: 4,
+          selectable: false,
+          evented: false,
+        } as any);
+
+        (text as any)._isDetectionOverlay = true;
+        canvas.add(text);
+      });
+
+      canvas.renderAll();
+
+      // Cleanup
+      return () => {
+        const detections = canvas
+          .getObjects()
+          .filter((obj: any) => obj._isDetectionOverlay);
+        detections.forEach((obj) => canvas.remove(obj));
+        canvas.renderAll();
+      };
+    }, [showDetections, detectedMasks, onDetectionClick]);
 
     return (
       <div className="relative">

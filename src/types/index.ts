@@ -73,3 +73,11 @@ export interface ExportOptions {
   quality: number;
   includeOriginalAssets: boolean;
 }
+
+export interface DetectedMask {
+  id: string;
+  path: [number, number][];
+  confidence: number;
+  bbox: { x: number; y: number; w: number; h: number };
+  color: string;
+}

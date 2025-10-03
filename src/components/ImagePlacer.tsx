@@ -2,13 +2,14 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import NextImage from "next/image";
-import { Project, Layer, BaseImage, CanvasState } from "@/types";
+import { Project, Layer, BaseImage, CanvasState, DetectedMask } from "@/types";
 import FabricCanvas, { FabricCanvasRef } from "./FabricCanvas";
 import LayerProperties from "./LayerProperties";
 import FloatingToolbar from "./FloatingToolbar";
 import { ProjectExporter, renderComposite } from "@/utils/export";
 import { CANVAS_MAX_WIDTH, CANVAS_MAX_HEIGHT } from "@/constants/canvas";
 import { useHistory, useHistoryKeyboard } from "@/hooks/useHistory";
+import { getSegmentationInstance } from "@/utils/segmentation";
 import JSZip from "jszip";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -34,6 +35,7 @@ import {
   Lightbulb,
   Keyboard,
   LifeBuoy,
+  Sparkles,
 } from "lucide-react";
 
 const ZOOM_MIN = 0.25;
@@ -270,6 +272,18 @@ export default function ImagePlacer() {
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   const [tagInputs, setTagInputs] = useState<Record<string, string>>({});
+
+  // Segmentation state
+  const [detectedMasks, setDetectedMasks] = useState<DetectedMask[]>([]);
+  const [showDetections, setShowDetections] = useState(false);
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [isLoadingModel, setIsLoadingModel] = useState(false);
+  const segmentationRef = useRef(getSegmentationInstance());
+
+  // Detection parameters
+  const [detectionConfidence, setDetectionConfidence] = useState(0.5);
+  const [detectionPointCount, setDetectionPointCount] = useState(25);
+  const [detectionMaskExpansion, setDetectionMaskExpansion] = useState(10);
 
   const tagUpdateTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
   const previewGenerationRef = useRef<symbol | null>(null);
@@ -1113,6 +1127,132 @@ export default function ImagePlacer() {
     setIsPreviewOpen(false);
   }, [previewImageUrl]);
 
+  /**
+   * Detect nails in the base image using YOLO segmentation model
+   */
+  const detectNails = useCallback(async () => {
+    if (!project?.base.imageData) {
+      setError("No base image loaded. Please load a base image first.");
+      return;
+    }
+
+    setIsDetecting(true);
+    setError(null);
+
+    try {
+      const segmentation = segmentationRef.current;
+
+      // Load model if not already loaded
+      if (!segmentation.isModelLoaded()) {
+        setIsLoadingModel(true);
+        console.log("Loading segmentation model...");
+        await segmentation.loadModel();
+        setIsLoadingModel(false);
+        console.log("Model loaded successfully");
+      }
+
+      // Load base image
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = project.base.imageData!;
+      });
+
+      console.log("Running nail detection...");
+      const detections = await segmentation.detectNails(
+        img,
+        detectionConfidence,
+        0.45,
+        detectionPointCount,
+        detectionMaskExpansion
+      );
+
+      console.log(`Detected ${detections.length} nails`);
+      setDetectedMasks(detections);
+      setShowDetections(true);
+
+      if (detections.length === 0) {
+        setError(
+          "No nails detected. Try a different image or adjust the model."
+        );
+      }
+    } catch (error) {
+      console.error("Detection failed:", error);
+      setError(
+        `Failed to detect nails: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
+    } finally {
+      setIsDetecting(false);
+      setIsLoadingModel(false);
+    }
+  }, [
+    project,
+    detectionConfidence,
+    detectionPointCount,
+    detectionMaskExpansion,
+  ]);
+
+  /**
+   * Assign a detected mask to the selected layer
+   */
+  const assignMaskToLayer = useCallback(
+    (maskId: string) => {
+      if (!canvasState.selectedLayerId) {
+        setError("Please select a layer first to assign the detected mask.");
+        return;
+      }
+
+      const detectedMask = detectedMasks.find((m) => m.id === maskId);
+      if (!detectedMask) return;
+
+      updateProject((prev) => {
+        if (!prev) return null;
+
+        return {
+          ...prev,
+          layers: prev.layers.map((layer) =>
+            layer.id === canvasState.selectedLayerId
+              ? {
+                  ...layer,
+                  mask: {
+                    enabled: true,
+                    visible: true,
+                    path: detectedMask.path,
+                    feather: 0.5,
+                    smoothing: 1.0,
+                    offset: { x: 0, y: 0 },
+                    editorPath: detectedMask.path,
+                    editorSmoothing: 1.0,
+                    editorOffset: { x: 0, y: 0 },
+                  },
+                }
+              : layer
+          ),
+          metadata: {
+            ...prev.metadata!,
+            modified: new Date().toISOString(),
+          },
+        };
+      }, `Assign detected mask to layer`);
+
+      // Hide detections after assignment
+      setShowDetections(false);
+      setDetectedMasks([]);
+    },
+    [canvasState.selectedLayerId, detectedMasks, updateProject]
+  );
+
+  /**
+   * Clear detected masks and hide overlay
+   */
+  const clearDetections = useCallback(() => {
+    setDetectedMasks([]);
+    setShowDetections(false);
+  }, []);
+
   const invertProjectHorizontally = useCallback(async () => {
     if (!project) {
       return;
@@ -1492,6 +1632,129 @@ export default function ImagePlacer() {
                   <Plus size={18} />
                   Add Overlay Image
                 </button>
+              </div>
+
+              {/* Detect Nails Button */}
+              <div className="mb-4">
+                {/* Detection Parameters */}
+                <details className="mb-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg">
+                    Detection Settings
+                  </summary>
+                  <div className="px-3 py-3 space-y-3">
+                    {/* Confidence Threshold */}
+                    <div>
+                      <label className="flex items-center justify-between text-xs text-gray-700 mb-1">
+                        <span>
+                          Confidence: {(detectionConfidence * 100).toFixed(0)}%
+                        </span>
+                        <span className="text-gray-500">
+                          Higher = fewer detections
+                        </span>
+                      </label>
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="0.9"
+                        step="0.05"
+                        value={detectionConfidence}
+                        onChange={(e) =>
+                          setDetectionConfidence(parseFloat(e.target.value))
+                        }
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Target point count */}
+                    <div>
+                      <label className="flex items-center justify-between text-xs text-gray-700 mb-1">
+                        <span>Target Points: {detectionPointCount}</span>
+                        <span className="text-gray-500">
+                          Higher = more detailed outline
+                        </span>
+                      </label>
+                      <input
+                        type="range"
+                        min="3"
+                        max="50"
+                        step="1"
+                        value={detectionPointCount}
+                        onChange={(e) =>
+                          setDetectionPointCount(parseInt(e.target.value, 10))
+                        }
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <div className="flex justify-between text-xs text-gray-500 mt-1">
+                        <span>3 pts</span>
+                        <span>50 pts</span>
+                      </div>
+                    </div>
+
+                    {/* Mask expansion */}
+                    <div>
+                      <label className="flex items-center justify-between text-xs text-gray-700 mb-1">
+                        <span>Mask Scale: +{detectionMaskExpansion}%</span>
+                        <span className="text-gray-500">
+                          Higher = larger mask
+                        </span>
+                      </label>
+                      <input
+                        type="range"
+                        min="1"
+                        max="100"
+                        step="1"
+                        value={detectionMaskExpansion}
+                        onChange={(e) =>
+                          setDetectionMaskExpansion(
+                            parseInt(e.target.value, 10)
+                          )
+                        }
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                      />
+                      <div className="flex justify-between text-xs text-gray-500 mt-1">
+                        <span>+1%</span>
+                        <span>+100%</span>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+
+                <button
+                  onClick={detectNails}
+                  disabled={isDetecting || isLoadingModel}
+                  className={`w-full px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors shadow-sm ${
+                    isDetecting || isLoadingModel
+                      ? "bg-purple-400 cursor-not-allowed"
+                      : "bg-purple-600 hover:bg-purple-700 text-white"
+                  }`}
+                  title="Use AI to detect nail masks automatically"
+                >
+                  <Sparkles size={18} />
+                  {isLoadingModel
+                    ? "Loading Model..."
+                    : isDetecting
+                    ? "Detecting..."
+                    : "🔍 Detect Nails"}
+                </button>
+                {showDetections && detectedMasks.length > 0 && (
+                  <div className="mt-2 p-2 bg-purple-50 rounded border border-purple-200">
+                    <div className="text-xs text-purple-900 font-medium mb-2">
+                      {detectedMasks.length} nail
+                      {detectedMasks.length !== 1 ? "s" : ""} detected
+                    </div>
+                    <div className="text-xs text-purple-700 mb-2">
+                      {canvasState.selectedLayerId
+                        ? "Click a detection on canvas to assign"
+                        : "Select a layer first"}
+                    </div>
+                    <button
+                      onClick={clearDetections}
+                      className="text-xs px-2 py-1 bg-white hover:bg-purple-100 text-purple-700 rounded border border-purple-300 w-full"
+                    >
+                      Clear Detections
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Global Mask Smoothing */}
@@ -2210,6 +2473,9 @@ export default function ImagePlacer() {
                 onZoomChange={handleZoomChange}
                 minZoom={ZOOM_MIN}
                 maxZoom={ZOOM_MAX}
+                detectedMasks={detectedMasks}
+                showDetections={showDetections}
+                onDetectionClick={assignMaskToLayer}
               />
             </div>
           ) : (
