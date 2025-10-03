@@ -51,6 +51,7 @@ export interface FabricCanvasRef {
   cancelMaskDrawing: () => void;
   finishMaskDrawing: () => void;
   getMaskDrawingState: () => { isDrawing: boolean; pointCount: number };
+  resetZoomAndPan: () => void;
 }
 
 const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
@@ -106,6 +107,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       hoverCursor: string;
     } | null>(null);
     const skipCanvasStateSyncRef = useRef(0);
+    const isSpaceKeyDownRef = useRef(false);
 
     const lastProjectRef = useRef<{
       baseImageData: string | undefined;
@@ -486,6 +488,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const canvas = fabricCanvasRef.current;
       const previous = selectedMaskHandleRef.current;
 
+      // Prevent re-entrant calls if already selecting the same handle
+      if (previous === handle) {
+        return;
+      }
+
       if (previous && previous !== handle) {
         previous.set({ fill: MASK_HANDLE_COLOR });
         (previous as any)._isSelectedMaskHandle = false;
@@ -782,7 +789,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           canvas.add(box);
           maskTransformBoxRef.current = box;
           maskTransformLayerIdRef.current = layer.id;
-          canvas.setActiveObject(box);
+          // Don't auto-select the box on creation
+          // canvas.setActiveObject(box);
         }
       } else {
         removeMaskTransformBox(layer.id);
@@ -813,11 +821,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         (handle as any)._isMaskHandle = true;
         (handle as any)._maskLayerId = layer.id;
 
-        handle.on("mousedown", () => {
-          if (canvasState?.tool === "mask" && !layer.locked) {
-            selectMaskHandle(handle);
-          }
-        });
+        // Don't add custom mousedown handler - let Fabric.js handle selection naturally
+        // Visual selection will be handled via selection events on the canvas
 
         const clampToCanvas = () => {
           if (!canvas) return;
@@ -1307,6 +1312,28 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         isDrawing: maskDrawingRef.current.isDrawing,
         pointCount: maskDrawingRef.current.points.length,
       }),
+      resetZoomAndPan: () => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+
+        // Reset the internal refs directly
+        canvasZoomRef.current = 1;
+        canvasPanRef.current = { x: 0, y: 0 };
+
+        // Clear any pending skip counts
+        skipCanvasStateSyncRef.current = 0;
+
+        // Apply the transform immediately
+        applyZoomAndPanToCanvas(canvas, 1, { x: 0, y: 0 });
+
+        // Notify parent components of the change
+        if (onZoomChange) {
+          onZoomChange(1);
+        }
+        if (onPanChange) {
+          onPanChange({ x: 0, y: 0 });
+        }
+      },
     }));
 
     useEffect(() => {
@@ -1513,6 +1540,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       canvas.on("selection:created", (e) => {
         const obj = e.selected?.[0];
         if (obj) {
+          // Check if it's a mask handle
+          if ((obj as any)._isMaskHandle) {
+            selectMaskHandle(obj as Circle);
+            return;
+          }
+
           const layerId = objectLayerMapRef.current.get(obj);
           if (layerId && onLayerSelected) {
             // Notify parent that a layer has been selected on canvas
@@ -1524,11 +1557,24 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       canvas.on("selection:updated", (e) => {
         const obj = e.selected?.[0];
         if (obj) {
+          // Check if it's a mask handle
+          if ((obj as any)._isMaskHandle) {
+            selectMaskHandle(obj as Circle);
+            return;
+          }
+
           const layerId = objectLayerMapRef.current.get(obj);
           if (layerId && onLayerSelected) {
             // Notify parent that a different layer has been selected on canvas
             onLayerSelected(layerId);
           }
+        }
+      });
+
+      canvas.on("selection:cleared", () => {
+        // When selection is cleared, deselect mask handle
+        if (canvasState?.tool === "mask") {
+          selectMaskHandle(null);
         }
       });
 
@@ -1539,6 +1585,232 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         fabricCanvasRef.current = null;
       };
     }, [onLayerUpdate]);
+
+    // Pan handling effect - register directly on canvas DOM element to survive canvas.clear()
+    useEffect(() => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas || !canvas.upperCanvasEl) return;
+
+      const canvasElement = canvas.upperCanvasEl;
+
+      let isPanning = false;
+      let lastPosition: { x: number; y: number } | null = null;
+
+      const getClientPosition = (
+        event?: MouseEvent | PointerEvent | TouchEvent
+      ): { x: number; y: number } | null => {
+        if (!event) {
+          return null;
+        }
+
+        if ("touches" in event) {
+          const activeTouch = event.touches[0] || event.changedTouches?.[0];
+          if (!activeTouch) {
+            return null;
+          }
+          return { x: activeTouch.clientX, y: activeTouch.clientY };
+        }
+
+        const clientEvent = event as MouseEvent | PointerEvent;
+        if (
+          clientEvent.clientX === undefined ||
+          clientEvent.clientY === undefined
+        ) {
+          return null;
+        }
+
+        return { x: clientEvent.clientX, y: clientEvent.clientY };
+      };
+
+      const updatePanFromPosition = (position: { x: number; y: number }) => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas || !lastPosition) {
+          return;
+        }
+
+        const deltaX = position.x - lastPosition.x;
+        const deltaY = position.y - lastPosition.y;
+
+        if (Math.abs(deltaX) < 0.01 && Math.abs(deltaY) < 0.01) {
+          return;
+        }
+
+        const currentPan = canvasPanRef.current ?? { x: 0, y: 0 };
+        const updatedPan = normalizePan({
+          x: currentPan.x + deltaX,
+          y: currentPan.y + deltaY,
+        });
+
+        canvasPanRef.current = updatedPan;
+        lastPosition = position;
+
+        applyZoomAndPanToCanvas(canvas, canvas.getZoom(), updatedPan);
+
+        if (onPanChange) {
+          onPanChange(updatedPan);
+        }
+      };
+
+      // Use native DOM events on canvas element instead of Fabric events
+      const handleCanvasMouseDown = (event: MouseEvent) => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+
+        // In pan tool mode, always pan
+        // In select mode, pan with space key or middle mouse button
+        const isPanTool = canvasState?.tool === "pan";
+        const shouldPan =
+          isPanTool || isSpaceKeyDownRef.current || event.button === 1;
+
+        if (!shouldPan) {
+          // Normal behavior - allow object selection
+          return;
+        }
+
+        // Start panning
+        const position = getClientPosition(event);
+        if (!position) return;
+
+        isPanning = true;
+        lastPosition = position;
+        canvas.discardActiveObject();
+        if (canvas.upperCanvasEl) {
+          canvas.setCursor("grabbing");
+        }
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+
+        window.addEventListener("mousemove", handleWindowMouseMove);
+        window.addEventListener("mouseup", handleWindowMouseUp);
+      };
+
+      const handleWindowMouseMove = (event: MouseEvent | PointerEvent) => {
+        if (!isPanning) return;
+        const position = getClientPosition(event);
+        if (!position) return;
+
+        updatePanFromPosition(position);
+      };
+
+      const handleWindowMouseUp = () => {
+        endPan();
+      };
+
+      const endPan = () => {
+        const canvas = fabricCanvasRef.current;
+        if (!isPanning) return;
+        isPanning = false;
+        lastPosition = null;
+
+        // Reset cursor based on current tool and space key state
+        if (canvas?.upperCanvasEl) {
+          if (canvasState?.tool === "pan") {
+            canvas.setCursor("grab");
+          } else if (canvasState?.tool === "select") {
+            if (isSpaceKeyDownRef.current) {
+              canvas.setCursor("grab");
+            } else {
+              canvas.setCursor("default");
+            }
+          }
+        }
+
+        window.removeEventListener("mousemove", handleWindowMouseMove);
+        window.removeEventListener("mouseup", handleWindowMouseUp);
+      };
+
+      // Space key handling for pan mode in select tool
+      const handleKeyDown = (event: KeyboardEvent) => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas || canvasState?.tool !== "select") return;
+        if (event.code === "Space" && !isSpaceKeyDownRef.current) {
+          // Prevent space from triggering other actions
+          const activeElement = document.activeElement as HTMLElement;
+          if (
+            activeElement &&
+            (activeElement.tagName === "INPUT" ||
+              activeElement.tagName === "TEXTAREA")
+          ) {
+            return; // Don't override space in input fields
+          }
+
+          event.preventDefault();
+          isSpaceKeyDownRef.current = true;
+
+          // Make all objects non-selectable and non-evented to enable panning over them
+          canvas.selection = false;
+          const objects = canvas.getObjects();
+
+          objects.forEach((obj) => {
+            if (objectLayerMapRef.current.has(obj)) {
+              (obj as any)._wasSelectable = obj.selectable;
+              (obj as any)._wasEvented = obj.evented;
+              obj.selectable = false;
+              obj.evented = false;
+              obj.hoverCursor = "grab";
+            }
+          });
+
+          canvas.defaultCursor = "grab";
+          canvas.hoverCursor = "grab";
+          if (!isPanning && canvas.upperCanvasEl) {
+            canvas.setCursor("grab");
+          }
+          canvas.renderAll();
+        }
+      };
+
+      const handleKeyUp = (event: KeyboardEvent) => {
+        const canvas = fabricCanvasRef.current;
+        if (!canvas) return;
+        if (event.code === "Space" && isSpaceKeyDownRef.current) {
+          event.preventDefault();
+          isSpaceKeyDownRef.current = false;
+          if (canvasState?.tool === "select") {
+            // Restore object selectability
+            canvas.selection = false; // Keep false to prevent multi-select box
+            const objects = canvas.getObjects();
+            objects.forEach((obj) => {
+              if (objectLayerMapRef.current.has(obj)) {
+                obj.selectable =
+                  (obj as any)._wasSelectable !== undefined
+                    ? (obj as any)._wasSelectable
+                    : true;
+                obj.evented =
+                  (obj as any)._wasEvented !== undefined
+                    ? (obj as any)._wasEvented
+                    : true;
+                delete (obj as any)._wasSelectable;
+                delete (obj as any)._wasEvented;
+
+                const layerId = objectLayerMapRef.current.get(obj);
+                const layer = project?.layers.find((l) => l.id === layerId);
+                obj.hoverCursor = layer?.locked ? "not-allowed" : "move";
+              }
+            });
+
+            canvas.defaultCursor = "default";
+            canvas.hoverCursor = "move";
+            if (!isPanning && canvas.upperCanvasEl) {
+              canvas.setCursor("default");
+            }
+            canvas.renderAll();
+          }
+        }
+      };
+
+      // Register on canvas DOM element, not Fabric events
+      canvasElement.addEventListener("mousedown", handleCanvasMouseDown);
+      window.addEventListener("keydown", handleKeyDown);
+      window.addEventListener("keyup", handleKeyUp);
+
+      return () => {
+        canvasElement.removeEventListener("mousedown", handleCanvasMouseDown);
+        window.removeEventListener("keydown", handleKeyDown);
+        window.removeEventListener("keyup", handleKeyUp);
+        endPan();
+      };
+    }, [canvasState?.tool, onPanChange, project]);
 
     // Update canvas when project changes
     useEffect(() => {
@@ -1619,8 +1891,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           return;
         }
 
+        // Always prevent default and stop propagation to ensure zoom works
         event.preventDefault();
         event.stopPropagation();
+        opt.e.preventDefault();
+        opt.e.stopPropagation();
 
         const currentZoom = canvasZoomRef.current ?? activeCanvas.getZoom();
         const currentPan =
@@ -1681,185 +1956,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         canvas.off("mouse:wheel", handleWheel);
       };
     }, [minZoom, maxZoom, onPanChange, onZoomChange]);
-
-    useEffect(() => {
-      const canvas = fabricCanvasRef.current;
-      if (!canvas) return;
-
-      if (canvasState?.tool === "pan") {
-        if (!previousInteractionStateRef.current) {
-          previousInteractionStateRef.current = {
-            skipTargetFind: canvas.skipTargetFind,
-            selection: canvas.selection,
-            defaultCursor: canvas.defaultCursor,
-            hoverCursor: canvas.hoverCursor,
-          };
-        }
-
-        canvas.skipTargetFind = true;
-        canvas.selection = false;
-        canvas.defaultCursor = "grab";
-        canvas.hoverCursor = "grab";
-        canvas.setCursor("grab");
-      } else if (previousInteractionStateRef.current) {
-        const previous = previousInteractionStateRef.current;
-        canvas.skipTargetFind = previous.skipTargetFind;
-        canvas.selection = previous.selection;
-        canvas.defaultCursor = previous.defaultCursor;
-        canvas.hoverCursor = previous.hoverCursor;
-        canvas.setCursor(previous.defaultCursor || "default");
-        previousInteractionStateRef.current = null;
-      }
-    }, [canvasState?.tool]);
-
-    useEffect(() => {
-      const canvas = fabricCanvasRef.current;
-      if (!canvas) return;
-
-      let isPanning = false;
-      let lastPosition: { x: number; y: number } | null = null;
-
-      const getClientPosition = (
-        event?: MouseEvent | PointerEvent | TouchEvent
-      ): { x: number; y: number } | null => {
-        if (!event) {
-          return null;
-        }
-
-        if ("touches" in event) {
-          const activeTouch = event.touches[0] || event.changedTouches?.[0];
-          if (!activeTouch) {
-            return null;
-          }
-          return { x: activeTouch.clientX, y: activeTouch.clientY };
-        }
-
-        const clientEvent = event as MouseEvent | PointerEvent;
-        if (
-          clientEvent.clientX === undefined ||
-          clientEvent.clientY === undefined
-        ) {
-          return null;
-        }
-
-        return { x: clientEvent.clientX, y: clientEvent.clientY };
-      };
-
-      const updatePanFromPosition = (position: { x: number; y: number }) => {
-        if (!lastPosition) {
-          return;
-        }
-
-        const deltaX = position.x - lastPosition.x;
-        const deltaY = position.y - lastPosition.y;
-
-        if (Math.abs(deltaX) < 0.01 && Math.abs(deltaY) < 0.01) {
-          return;
-        }
-
-        const currentPan = canvasPanRef.current ?? { x: 0, y: 0 };
-        const updatedPan = normalizePan({
-          x: currentPan.x + deltaX,
-          y: currentPan.y + deltaY,
-        });
-
-        canvasPanRef.current = updatedPan;
-        lastPosition = position;
-
-        applyZoomAndPanToCanvas(canvas, canvas.getZoom(), updatedPan);
-
-        if (onPanChange) {
-          onPanChange(updatedPan);
-        }
-      };
-
-      const handleMouseDown = (e: any) => {
-        if (canvasState?.tool !== "pan") return;
-
-        const event = e.e as MouseEvent | PointerEvent | TouchEvent | undefined;
-        const position = getClientPosition(event);
-        if (!position) return;
-
-        isPanning = true;
-        lastPosition = position;
-        canvas.discardActiveObject();
-        canvas.setCursor("grabbing");
-        event?.preventDefault?.();
-        event?.stopPropagation?.();
-
-        window.addEventListener("mousemove", handleWindowMouseMove);
-        window.addEventListener("mouseup", handleWindowMouseUp);
-        window.addEventListener("touchmove", handleWindowTouchMove, {
-          passive: false,
-        });
-        window.addEventListener("touchend", handleWindowTouchEnd);
-      };
-
-      const handleMouseMove = (e: any) => {
-        if (!isPanning || canvasState?.tool !== "pan") return;
-
-        const event = e.e as MouseEvent | PointerEvent | TouchEvent | undefined;
-        const position = getClientPosition(event);
-        if (!position) return;
-
-        updatePanFromPosition(position);
-      };
-
-      const handleWindowMouseMove = (event: MouseEvent | PointerEvent) => {
-        if (!isPanning || canvasState?.tool !== "pan") return;
-        const position = getClientPosition(event);
-        if (!position) return;
-
-        updatePanFromPosition(position);
-      };
-
-      const handleWindowTouchMove = (event: TouchEvent) => {
-        if (!isPanning || canvasState?.tool !== "pan") return;
-        const position = getClientPosition(event);
-        if (!position) return;
-
-        event.preventDefault();
-        updatePanFromPosition(position);
-      };
-
-      const endPan = () => {
-        if (!isPanning) return;
-        isPanning = false;
-        lastPosition = null;
-
-        if (canvasState?.tool === "pan") {
-          canvas.setCursor("grab");
-        }
-
-        window.removeEventListener("mousemove", handleWindowMouseMove);
-        window.removeEventListener("mouseup", handleWindowMouseUp);
-        window.removeEventListener("touchmove", handleWindowTouchMove);
-        window.removeEventListener("touchend", handleWindowTouchEnd);
-      };
-
-      const handleMouseUp = () => {
-        endPan();
-      };
-
-      const handleWindowMouseUp = () => {
-        endPan();
-      };
-
-      const handleWindowTouchEnd = () => {
-        endPan();
-      };
-
-      canvas.on("mouse:down", handleMouseDown);
-      canvas.on("mouse:move", handleMouseMove);
-      canvas.on("mouse:up", handleMouseUp);
-
-      return () => {
-        canvas.off("mouse:down", handleMouseDown);
-        canvas.off("mouse:move", handleMouseMove);
-        canvas.off("mouse:up", handleMouseUp);
-        endPan();
-      };
-    }, [canvasState?.tool, onPanChange]);
 
     // Update individual layer properties when they change (with optimized dependencies)
     useEffect(() => {
@@ -1935,9 +2031,23 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const canvas = fabricCanvasRef.current;
       if (!canvas) return;
 
-      if (canvasState?.tool === "mask") {
-        // Disable object selection when in mask mode
+      if (canvasState?.tool === "pan") {
+        // In pan tool mode, make everything non-selectable and set pan cursor
         canvas.selection = false;
+        canvas.defaultCursor = "grab";
+        canvas.hoverCursor = "grab";
+
+        const objects = canvas.getObjects();
+        objects.forEach((obj) => {
+          if (objectLayerMapRef.current.has(obj)) {
+            obj.selectable = false;
+            obj.evented = false;
+            obj.hoverCursor = "grab";
+          }
+        });
+      } else if (canvasState?.tool === "mask") {
+        // Disable object selection when in mask mode
+        canvas.selection = false; // Keep false to prevent multi-selection box
         canvas.defaultCursor = "crosshair";
         canvas.hoverCursor = "crosshair";
 
@@ -1958,6 +2068,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               handle.visible = showHandles;
               handle.evented = showHandles;
               handle.selectable = showHandles;
+              // Make sure handles can be moved even though canvas.selection is false
+              handle.lockMovementX = false;
+              handle.lockMovementY = false;
             });
 
             const maskShape = (obj as any)._maskPolygon as
@@ -2008,39 +2121,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             }
           }
         });
-      } else if (canvasState?.tool === "pan") {
-        canvas.selection = false;
-        canvas.defaultCursor = "grab";
-        canvas.hoverCursor = "grab";
-
-        const objects = canvas.getObjects();
-        objects.forEach((obj) => {
-          if (objectLayerMapRef.current.has(obj)) {
-            obj.selectable = false;
-            obj.evented = false;
-
-            const handles: Circle[] | undefined = (obj as any)
-              ._maskPointHandles;
-            handles?.forEach((handle) => {
-              handle.visible = false;
-              handle.evented = false;
-              handle.selectable = false;
-            });
-
-            const maskShape = (obj as any)._maskPolygon as
-              | FabricObject
-              | undefined;
-            if (maskShape) {
-              maskShape.evented = false;
-              maskShape.selectable = false;
-              maskShape.hoverCursor = "default";
-            }
-          } else if ((obj as any)._isMaskOverlay) {
-            obj.evented = false;
-            obj.selectable = false;
-            obj.hoverCursor = "default";
-          }
-        });
       } else {
         // Clean up any active mask drawing when switching away from mask tool
         if (maskDrawingRef.current.isDrawing) {
@@ -2060,8 +2140,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             targetLayerId: undefined,
           };
         }
-        // Enable object selection in select mode
-        canvas.selection = true;
+        // Disable multi-selection box (we'll use pan on empty canvas instead)
+        canvas.selection = false;
         canvas.defaultCursor = "default";
         canvas.hoverCursor = "move";
 
@@ -2264,6 +2344,14 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             if ((target as any)._isMaskTransformBox) {
               return; // interacting with mask transform box
             }
+          } else {
+            // Clicking on empty canvas - deselect transform box and mask handle
+            const box = maskTransformBoxRef.current;
+            if (box && canvas) {
+              canvas.discardActiveObject();
+              canvas.requestRenderAll();
+            }
+            selectMaskHandle(null);
           }
 
           // Check if the selected layer is locked

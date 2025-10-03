@@ -14,7 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Image Placer",
-  description: "Professional image composition tool for creating product mockups with precise positioning and transforms",
+  description:
+    "Professional image composition tool for creating product mockups with precise positioning and transforms",
 };
 
 export default function RootLayout({
@@ -23,9 +24,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        suppressHydrationWarning
       >
         {children}
       </body>

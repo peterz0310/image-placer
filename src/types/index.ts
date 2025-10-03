@@ -63,7 +63,7 @@ export interface CanvasState {
   zoom: number;
   pan: { x: number; y: number };
   selectedLayerId?: string;
-  tool: "select" | "mask" | "pan";
+  tool: "select" | "pan" | "mask";
   transformMode: "normal" | "skew";
 }
 

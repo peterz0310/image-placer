@@ -2,6 +2,7 @@
 
 import {
   MousePointer2,
+  Hand,
   Move3D,
   Scissors,
   Undo2,
@@ -9,13 +10,12 @@ import {
   Scan,
   Minus,
   Plus,
-  Hand,
 } from "lucide-react";
 
 interface FloatingToolbarProps {
-  tool: "select" | "mask" | "pan";
+  tool: "select" | "pan" | "mask";
   transformMode: "normal" | "skew";
-  onToolChange: (tool: "select" | "mask" | "pan") => void;
+  onToolChange: (tool: "select" | "pan" | "mask") => void;
   onTransformModeChange: (mode: "normal" | "skew") => void;
   // History props
   canUndo?: boolean;
@@ -25,6 +25,7 @@ interface FloatingToolbarProps {
   // Zoom controls
   zoom: number;
   onZoomChange: (nextZoom: number) => void;
+  onZoomReset?: () => void;
   minZoom?: number;
   maxZoom?: number;
   zoomStep?: number;
@@ -41,6 +42,7 @@ export default function FloatingToolbar({
   onRedo,
   zoom,
   onZoomChange,
+  onZoomReset,
   minZoom = 0.25,
   maxZoom = 4,
   zoomStep = 0.1,
@@ -50,10 +52,7 @@ export default function FloatingToolbar({
   const canZoomIn = clampedZoom < maxZoom - 1e-6;
 
   const handleZoomAdjust = (delta: number) => {
-    const nextZoom = Math.min(
-      Math.max(clampedZoom + delta, minZoom),
-      maxZoom
-    );
+    const nextZoom = Math.min(Math.max(clampedZoom + delta, minZoom), maxZoom);
     onZoomChange(Number(nextZoom.toFixed(2)));
   };
 
@@ -109,9 +108,15 @@ export default function FloatingToolbar({
           <Minus size={16} />
         </button>
         <button
-          onClick={() => onZoomChange(1)}
+          onClick={() => {
+            if (onZoomReset) {
+              onZoomReset();
+            } else {
+              onZoomChange(1);
+            }
+          }}
           className="px-3 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-200 transition-colors"
-          title="Reset zoom"
+          title="Reset zoom and center"
         >
           {`${Math.round(clampedZoom * 100)}%`}
         </button>
@@ -141,7 +146,7 @@ export default function FloatingToolbar({
               ? "bg-blue-600 text-white"
               : "text-gray-700 hover:text-gray-900 hover:bg-gray-200"
           }`}
-          title="Select Tool"
+          title="Select Tool (hold Space or use middle mouse to pan)"
         >
           <MousePointer2 size={16} />
           Select
@@ -153,7 +158,7 @@ export default function FloatingToolbar({
               ? "bg-blue-600 text-white"
               : "text-gray-700 hover:text-gray-900 hover:bg-gray-200"
           }`}
-          title="Pan Tool"
+          title="Pan Tool (or hold Space/use middle mouse in Select mode)"
         >
           <Hand size={16} />
           Pan

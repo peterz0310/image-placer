@@ -282,7 +282,7 @@ export default function ImagePlacer() {
 
   // Detection parameters
   const [detectionConfidence, setDetectionConfidence] = useState(0.5);
-  const [detectionPointCount, setDetectionPointCount] = useState(25);
+  const [detectionPointCount, setDetectionPointCount] = useState(16);
   const [detectionMaskExpansion, setDetectionMaskExpansion] = useState(10);
 
   const tagUpdateTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
@@ -740,135 +740,166 @@ export default function ImagePlacer() {
    * Handles overlay image uploads and adds them as new layers
    */
   const handleOverlayUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !project) return;
+    const files = event.target.files;
+    if (!files || files.length === 0 || !project) return;
 
-    // Validate file type
-    if (!file.type.startsWith("image/")) {
-      setError("Please select a valid image file.");
-      return;
-    }
+    // Convert FileList to array
+    const filesArray = Array.from(files);
 
-    // Validate file size (max 50MB)
+    // Validate file types and sizes
     const maxSize = 50 * 1024 * 1024;
-    if (file.size > maxSize) {
-      setError(
-        "Image file is too large. Please select an image smaller than 50MB."
-      );
-      return;
+    for (const file of filesArray) {
+      if (!file.type.startsWith("image/")) {
+        setError(`"${file.name}" is not a valid image file. Skipping.`);
+        continue;
+      }
+      if (file.size > maxSize) {
+        setError(`"${file.name}" is too large (max 50MB). Skipping.`);
+        continue;
+      }
     }
 
     // Clear any previous errors
     setError(null);
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      // Load the image to get its dimensions
-      const img = new Image();
-      img.onload = () => {
-        // Generate unique name if duplicate exists
-        const generateUniqueName = (
-          baseName: string,
-          existingLayers: Layer[]
-        ): string => {
-          const existingNames = existingLayers.map((layer) => layer.name);
-          if (!existingNames.includes(baseName)) {
-            return baseName;
-          }
+    // Generate unique name helper
+    const generateUniqueName = (
+      baseName: string,
+      existingLayers: Layer[]
+    ): string => {
+      const existingNames = existingLayers.map((layer) => layer.name);
+      if (!existingNames.includes(baseName)) {
+        return baseName;
+      }
 
-          const nameParts = baseName.split(".");
-          const extension = nameParts.pop();
-          const nameWithoutExt = nameParts.join(".");
+      const nameParts = baseName.split(".");
+      const extension = nameParts.pop();
+      const nameWithoutExt = nameParts.join(".");
 
-          let counter = 1;
-          let uniqueName;
-          do {
-            uniqueName = `${nameWithoutExt} (${counter})${
-              extension ? "." + extension : ""
-            }`;
-            counter++;
-          } while (existingNames.includes(uniqueName));
+      let counter = 1;
+      let uniqueName;
+      do {
+        uniqueName = `${nameWithoutExt} (${counter})${
+          extension ? "." + extension : ""
+        }`;
+        counter++;
+      } while (existingNames.includes(uniqueName));
 
-          return uniqueName;
-        };
-
-        const uniqueName = generateUniqueName(file.name, project.layers);
-
-        // Calculate normalized scale values
-        // Start with a reasonable default size (25% of overlay image)
-        const initialScaleX = 0.25;
-        const initialScaleY = 0.25;
-
-        // Use the same formula as the canvas update handler
-        const maxDisplayWidth = CANVAS_MAX_WIDTH;
-        const maxDisplayHeight = CANVAS_MAX_HEIGHT;
-        const displayScale = Math.min(
-          maxDisplayWidth / project.base.width,
-          maxDisplayHeight / project.base.height,
-          1
-        );
-
-        const normalizedScaleX =
-          (img.width * initialScaleX) / (project.base.width * displayScale);
-        const normalizedScaleY =
-          (img.height * initialScaleY) / (project.base.height * displayScale);
-
-        const newLayer: Layer = {
-          id: uuidv4(),
-          name: uniqueName,
-          tag: undefined,
-          transform: {
-            left: 0.5,
-            top: 0.5,
-            scaleX: initialScaleX,
-            scaleY: initialScaleY,
-            angle: 0,
-            normalizedScaleX,
-            normalizedScaleY,
-          },
-          mask: {
-            enabled: false,
-            visible: true,
-            path: [],
-            feather: 0,
-            smoothing: 0,
-            offset: { x: 0, y: 0 },
-          },
-          opacity: 1,
-          visible: true,
-          locked: false,
-          imageData: e.target?.result as string,
-          originalFile: file,
-        };
-
-        updateProject(
-          (prev) =>
-            prev
-              ? {
-                  ...prev,
-                  layers: [...prev.layers, newLayer],
-                  metadata: {
-                    ...prev.metadata!,
-                    modified: new Date().toISOString(),
-                  },
-                }
-              : null,
-          `Add layer: ${newLayer.name}`
-        );
-
-        // Switch to transform mode and select the new layer
-        setCanvasState((prev) => ({
-          ...prev,
-          selectedLayerId: newLayer.id,
-          tool: "select",
-        }));
-      };
-      img.onerror = () => {
-        setError("Failed to load overlay image for processing.");
-      };
-      img.src = e.target?.result as string;
+      return uniqueName;
     };
-    reader.readAsDataURL(file);
+
+    // Process all files
+    const newLayers: Layer[] = [];
+    let processedCount = 0;
+
+    filesArray.forEach((file, index) => {
+      // Skip invalid files
+      if (!file.type.startsWith("image/") || file.size > maxSize) {
+        processedCount++;
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        // Load the image to get its dimensions
+        const img = new Image();
+        img.onload = () => {
+          const uniqueName = generateUniqueName(file.name, [
+            ...project.layers,
+            ...newLayers,
+          ]);
+
+          // Calculate normalized scale values
+          // Start with a reasonable default size (25% of overlay image)
+          const initialScaleX = 0.25;
+          const initialScaleY = 0.25;
+
+          // Use the same formula as the canvas update handler
+          const maxDisplayWidth = CANVAS_MAX_WIDTH;
+          const maxDisplayHeight = CANVAS_MAX_HEIGHT;
+          const displayScale = Math.min(
+            maxDisplayWidth / project.base.width,
+            maxDisplayHeight / project.base.height,
+            1
+          );
+
+          const normalizedScaleX =
+            (img.width * initialScaleX) / (project.base.width * displayScale);
+          const normalizedScaleY =
+            (img.height * initialScaleY) / (project.base.height * displayScale);
+
+          const newLayer: Layer = {
+            id: uuidv4(),
+            name: uniqueName,
+            tag: undefined,
+            transform: {
+              left: 0.5,
+              top: 0.5,
+              scaleX: initialScaleX,
+              scaleY: initialScaleY,
+              angle: 0,
+              normalizedScaleX,
+              normalizedScaleY,
+            },
+            mask: {
+              enabled: false,
+              visible: true,
+              path: [],
+              feather: 0,
+              smoothing: 0,
+              offset: { x: 0, y: 0 },
+            },
+            opacity: 1,
+            visible: true,
+            locked: false,
+            imageData: e.target?.result as string,
+            originalFile: file,
+          };
+
+          newLayers.push(newLayer);
+          processedCount++;
+
+          // Once all files are processed, add all layers at once
+          if (processedCount === filesArray.length) {
+            updateProject(
+              (prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      layers: [...prev.layers, ...newLayers],
+                      metadata: {
+                        ...prev.metadata!,
+                        modified: new Date().toISOString(),
+                      },
+                    }
+                  : null,
+              `Add ${newLayers.length} layer${
+                newLayers.length !== 1 ? "s" : ""
+              }`
+            );
+
+            // Switch to transform mode and select the last added layer
+            if (newLayers.length > 0) {
+              setCanvasState((prev) => ({
+                ...prev,
+                selectedLayerId: newLayers[newLayers.length - 1].id,
+                tool: "select",
+              }));
+            }
+          }
+        };
+        img.onerror = () => {
+          setError(`Failed to load "${file.name}" for processing.`);
+          processedCount++;
+        };
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = () => {
+        setError(`Failed to read "${file.name}".`);
+        processedCount++;
+      };
+      reader.readAsDataURL(file);
+    });
 
     // Clear the input so the same file can be selected again
     event.target.value = "";
@@ -1438,6 +1469,56 @@ export default function ImagePlacer() {
     }));
   }, []);
 
+  const handleZoomReset = useCallback(() => {
+    // Use the canvas ref's reset method which directly manipulates the canvas
+    // and bypasses the state sync mechanism to avoid race conditions
+    if (fabricCanvasRef.current) {
+      fabricCanvasRef.current.resetZoomAndPan();
+    }
+  }, []);
+
+  // Handle canvas zoom keyboard shortcuts (Cmd+/Cmd-)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Only handle zoom if canvas area has focus (not in input fields)
+      const activeElement = document.activeElement as HTMLElement | null;
+      if (
+        activeElement &&
+        (activeElement.tagName === "INPUT" ||
+          activeElement.tagName === "TEXTAREA" ||
+          activeElement.tagName === "SELECT" ||
+          activeElement.isContentEditable)
+      ) {
+        return;
+      }
+
+      // Check for Cmd+/Cmd- (Mac) or Ctrl+/Ctrl- (Windows/Linux)
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      const modifierKey = isMac ? event.metaKey : event.ctrlKey;
+
+      if (modifierKey && (event.key === "=" || event.key === "+")) {
+        // Zoom in
+        event.preventDefault();
+        const nextZoom = Math.min(canvasState.zoom + ZOOM_STEP, ZOOM_MAX);
+        handleZoomChange(nextZoom);
+      } else if (modifierKey && (event.key === "-" || event.key === "_")) {
+        // Zoom out
+        event.preventDefault();
+        const nextZoom = Math.max(canvasState.zoom - ZOOM_STEP, ZOOM_MIN);
+        handleZoomChange(nextZoom);
+      } else if (modifierKey && event.key === "0") {
+        // Reset zoom to 100%
+        event.preventDefault();
+        handleZoomChange(1);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [canvasState.zoom, handleZoomChange]);
+
   return (
     <div className="h-screen flex flex-col">
       {/* Header */}
@@ -1538,6 +1619,7 @@ export default function ImagePlacer() {
           ref={overlayInputRef}
           type="file"
           accept="image/*"
+          multiple
           onChange={handleOverlayUpload}
           className="hidden"
         />
@@ -1634,12 +1716,11 @@ export default function ImagePlacer() {
                 </button>
               </div>
 
-              {/* Detect Nails Button */}
-              <div className="mb-4">
-                {/* Detection Parameters */}
-                <details className="mb-3 bg-gray-50 rounded-lg border border-gray-200">
+              {/* Detection Dropdown */}
+              <div className="mb-2">
+                <details className="bg-gray-50 rounded-lg border border-gray-200">
                   <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg">
-                    Detection Settings
+                    Detection
                   </summary>
                   <div className="px-3 py-3 space-y-3">
                     {/* Confidence Threshold */}
@@ -1716,63 +1797,69 @@ export default function ImagePlacer() {
                         <span>+100%</span>
                       </div>
                     </div>
+                    <button
+                      onClick={detectNails}
+                      disabled={isDetecting || isLoadingModel}
+                      className={`w-full px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors shadow-sm ${
+                        isDetecting || isLoadingModel
+                          ? "bg-purple-400 cursor-not-allowed"
+                          : "bg-purple-600 hover:bg-purple-700 text-white"
+                      }`}
+                      title="Use AI to detect nail masks automatically"
+                    >
+                      <Sparkles size={18} />
+                      {isLoadingModel
+                        ? "Loading Model..."
+                        : isDetecting
+                        ? "Detecting..."
+                        : "🔍 Detect Nails"}
+                    </button>
+                    {showDetections && detectedMasks.length > 0 && (
+                      <div className="mt-2 p-2 bg-purple-50 rounded border border-purple-200">
+                        <div className="text-xs text-purple-900 font-medium mb-2">
+                          {detectedMasks.length} nail
+                          {detectedMasks.length !== 1 ? "s" : ""} detected
+                        </div>
+                        <div className="text-xs text-purple-700 mb-2">
+                          {canvasState.selectedLayerId
+                            ? "Click a detection on canvas to assign"
+                            : "Select a layer first"}
+                        </div>
+                        <button
+                          onClick={clearDetections}
+                          className="text-xs px-2 py-1 bg-white hover:bg-purple-100 text-purple-700 rounded border border-purple-300 w-full"
+                        >
+                          Clear Detections
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </details>
-
-                <button
-                  onClick={detectNails}
-                  disabled={isDetecting || isLoadingModel}
-                  className={`w-full px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors shadow-sm ${
-                    isDetecting || isLoadingModel
-                      ? "bg-purple-400 cursor-not-allowed"
-                      : "bg-purple-600 hover:bg-purple-700 text-white"
-                  }`}
-                  title="Use AI to detect nail masks automatically"
-                >
-                  <Sparkles size={18} />
-                  {isLoadingModel
-                    ? "Loading Model..."
-                    : isDetecting
-                    ? "Detecting..."
-                    : "🔍 Detect Nails"}
-                </button>
-                {showDetections && detectedMasks.length > 0 && (
-                  <div className="mt-2 p-2 bg-purple-50 rounded border border-purple-200">
-                    <div className="text-xs text-purple-900 font-medium mb-2">
-                      {detectedMasks.length} nail
-                      {detectedMasks.length !== 1 ? "s" : ""} detected
-                    </div>
-                    <div className="text-xs text-purple-700 mb-2">
-                      {canvasState.selectedLayerId
-                        ? "Click a detection on canvas to assign"
-                        : "Select a layer first"}
-                    </div>
-                    <button
-                      onClick={clearDetections}
-                      className="text-xs px-2 py-1 bg-white hover:bg-purple-100 text-purple-700 rounded border border-purple-300 w-full"
-                    >
-                      Clear Detections
-                    </button>
-                  </div>
-                )}
               </div>
 
-              {/* Global Mask Smoothing */}
-              <div className="mb-4">
-                <button
-                  type="button"
-                  onClick={handleSetAllMaskSmoothing}
-                  disabled={disableGlobalSmoothingButton}
-                  className={`w-full px-4 py-2 text-sm font-medium rounded-lg border transition-colors flex items-center justify-center gap-2 ${
-                    disableGlobalSmoothingButton
-                      ? "border-gray-200 text-gray-400 bg-gray-100 cursor-not-allowed"
-                      : "border-blue-500 text-blue-700 hover:bg-blue-50"
-                  }`}
-                  title="Set every mask's smoothing value to 100%"
-                >
-                  <Check size={16} />
-                  Smooth all masks (100%)
-                </button>
+              {/* Settings Accordion */}
+              <div className="mb-2">
+                <details className="bg-gray-50 rounded-lg border border-gray-200">
+                  <summary className="px-3 py-2 cursor-pointer text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg">
+                    Settings
+                  </summary>
+                  <div className="px-3 py-3">
+                    <button
+                      type="button"
+                      onClick={handleSetAllMaskSmoothing}
+                      disabled={disableGlobalSmoothingButton}
+                      className={`w-full px-4 py-2 text-sm font-medium rounded-lg border transition-colors flex items-center justify-center gap-2 ${
+                        disableGlobalSmoothingButton
+                          ? "border-gray-200 text-gray-400 bg-gray-100 cursor-not-allowed"
+                          : "border-blue-500 text-blue-700 hover:bg-blue-50"
+                      }`}
+                      title="Set every mask's smoothing value to 100%"
+                    >
+                      <Check size={16} />
+                      Smooth all masks (100%)
+                    </button>
+                  </div>
+                </details>
               </div>
             </div>
 
@@ -2439,6 +2526,7 @@ export default function ImagePlacer() {
               onRedo={redo}
               zoom={canvasState.zoom}
               onZoomChange={handleZoomChange}
+              onZoomReset={handleZoomReset}
               minZoom={ZOOM_MIN}
               maxZoom={ZOOM_MAX}
               zoomStep={ZOOM_STEP}
