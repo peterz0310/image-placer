@@ -108,6 +108,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
     } | null>(null);
     const skipCanvasStateSyncRef = useRef(0);
     const isSpaceKeyDownRef = useRef(false);
+    const zoomDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     const lastProjectRef = useRef<{
       baseImageData: string | undefined;
@@ -1086,16 +1087,18 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const initialOffset = layer.mask.offset ?? { x: 0, y: 0 };
       (maskShape as any)._appliedOffset = { ...initialOffset };
 
+      const inMaskMode = canvasState?.tool === "mask";
+      const inSelectMode = canvasState?.tool === "select";
+      // Allow mask drag in mask mode OR select mode (for movability)
+      const allowMaskDrag =
+        (inMaskMode || inSelectMode) &&
+        !layer.locked &&
+        layer.mask.enabled &&
+        layer.mask.visible;
+
       maskShape.hasBorders = true;
-      maskShape.hasControls = false;
-      maskShape.lockScalingX = true;
-      maskShape.lockScalingY = true;
-      maskShape.lockRotation = true;
       maskShape.objectCaching = true;
       maskShape.borderScaleFactor = 0.5;
-      const inMaskMode = canvasState?.tool === "mask";
-      const allowMaskDrag =
-        inMaskMode && !layer.locked && layer.mask.enabled && layer.mask.visible;
       maskShape.hoverCursor = layer.locked
         ? "not-allowed"
         : allowMaskDrag
@@ -1103,6 +1106,21 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         : "default";
       maskShape.evented = allowMaskDrag;
       maskShape.selectable = allowMaskDrag;
+
+      // In select mode, enable standard controls (scaling and rotation)
+      // In mask mode, keep controls hidden for point editing
+      if (inSelectMode) {
+        maskShape.hasControls = true;
+        maskShape.lockScalingX = false;
+        maskShape.lockScalingY = false;
+        maskShape.lockRotation = false;
+      } else {
+        maskShape.hasControls = false;
+        maskShape.lockScalingX = true;
+        maskShape.lockScalingY = true;
+        maskShape.lockRotation = true;
+      }
+
       (maskShape as any)._isMaskOverlay = true;
       (maskShape as any)._maskLayerId = layer.id;
 
@@ -1646,9 +1664,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
         applyZoomAndPanToCanvas(canvas, canvas.getZoom(), updatedPan);
 
-        if (onPanChange) {
-          onPanChange(updatedPan);
-        }
+        // Don't notify parent during panning - only when done
+        // This prevents React state updates from interfering with smooth panning
       };
 
       // Use native DOM events on canvas element instead of Fabric events
@@ -1701,6 +1718,13 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         if (!isPanning) return;
         isPanning = false;
         lastPosition = null;
+
+        // Notify parent of final pan position now that panning is done
+        if (onPanChange && canvas) {
+          const finalPan = canvasPanRef.current ?? { x: 0, y: 0 };
+          skipCanvasStateSyncRef.current += 1; // Skip the next state sync since we're already synced
+          onPanChange(finalPan);
+        }
 
         // Reset cursor based on current tool and space key state
         if (canvas?.upperCanvasEl) {
@@ -1878,29 +1902,24 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
     useEffect(() => {
       const canvas = fabricCanvasRef.current;
-      if (!canvas) return;
+      if (!canvas || !canvas.upperCanvasEl) return;
       if (!onZoomChange) return;
 
       const minZoomValue = Math.max(minZoom ?? 0.25, 0.05);
       const maxZoomValue = Math.max(maxZoom ?? 4, minZoomValue);
 
-      const handleWheel = (opt: any) => {
-        const event = opt?.e as WheelEvent | undefined;
+      // Shared zoom logic that zooms toward cursor position
+      const performZoom = (event: WheelEvent) => {
         const activeCanvas = fabricCanvasRef.current;
-        if (!event || !activeCanvas) {
+        if (!activeCanvas) {
           return;
         }
-
-        // Always prevent default and stop propagation to ensure zoom works
-        event.preventDefault();
-        event.stopPropagation();
-        opt.e.preventDefault();
-        opt.e.stopPropagation();
 
         const currentZoom = canvasZoomRef.current ?? activeCanvas.getZoom();
         const currentPan =
           canvasPanRef.current ?? getPanFromViewport(activeCanvas);
 
+        // Adjust sensitivity based on modifier keys
         const sensitivity = event.ctrlKey ? 0.02 : 0.0015;
         const zoomFactor = Math.exp(-event.deltaY * sensitivity);
         let nextZoom = currentZoom * zoomFactor;
@@ -1915,9 +1934,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           return;
         }
 
+        // Get mouse position relative to canvas
         const pointerX = event.clientX - rect.left;
         const pointerY = event.clientY - rect.top;
 
+        // Calculate world coordinates at pointer position before zoom
         const baseCurrent = getBaseTranslation(activeCanvas, currentZoom);
         const translateCurrentX = baseCurrent.x + currentPan.x;
         const translateCurrentY = baseCurrent.y + currentPan.y;
@@ -1925,6 +1946,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         const worldX = (pointerX - translateCurrentX) / currentZoom;
         const worldY = (pointerY - translateCurrentY) / currentZoom;
 
+        // Calculate new pan to keep the same world point under the cursor
         const baseNext = getBaseTranslation(activeCanvas, nextZoom);
         const translateNextX = pointerX - worldX * nextZoom;
         const translateNextY = pointerY - worldY * nextZoom;
@@ -1936,23 +1958,74 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
         const normalizedNextPan = normalizePan(nextPanRaw);
 
+        // Update refs immediately for smooth zooming
         canvasZoomRef.current = nextZoom;
         canvasPanRef.current = normalizedNextPan;
 
+        // Apply to canvas immediately
         applyZoomAndPanToCanvas(activeCanvas, nextZoom, normalizedNextPan);
 
-        if (onPanChange && !pansAreClose(normalizedNextPan, currentPan)) {
-          skipCanvasStateSyncRef.current += 1;
-          onPanChange(normalizedNextPan);
+        // Debounce state updates to parent to avoid jitter
+        if (zoomDebounceTimerRef.current) {
+          clearTimeout(zoomDebounceTimerRef.current);
         }
 
-        skipCanvasStateSyncRef.current += 1;
-        onZoomChange(nextZoom);
+        zoomDebounceTimerRef.current = setTimeout(() => {
+          // Notify parent after zooming settles
+          if (onPanChange && !pansAreClose(normalizedNextPan, currentPan)) {
+            skipCanvasStateSyncRef.current += 1;
+            onPanChange(normalizedNextPan);
+          }
+
+          skipCanvasStateSyncRef.current += 1;
+          if (onZoomChange) {
+            onZoomChange(nextZoom);
+          }
+
+          zoomDebounceTimerRef.current = null;
+        }, 50); // 50ms debounce - smooth but responsive
       };
 
+      // Native wheel event handler for smooth scrolling zoom
+      const handleNativeWheel = (event: WheelEvent) => {
+        // Prevent default scrolling behavior
+        event.preventDefault();
+        event.stopPropagation();
+
+        performZoom(event);
+      };
+
+      // Fabric.js wheel event handler (backup for compatibility)
+      const handleWheel = (opt: any) => {
+        const event = opt?.e as WheelEvent | undefined;
+        if (!event) {
+          return;
+        }
+
+        // Prevent default and stop propagation
+        event.preventDefault();
+        event.stopPropagation();
+        opt.e.preventDefault();
+        opt.e.stopPropagation();
+
+        performZoom(event);
+      };
+
+      // Register both native and Fabric handlers
+      const canvasElement = canvas.upperCanvasEl;
+      canvasElement.addEventListener("wheel", handleNativeWheel, {
+        passive: false,
+      });
       canvas.on("mouse:wheel", handleWheel);
 
       return () => {
+        // Clear any pending debounced zoom updates
+        if (zoomDebounceTimerRef.current) {
+          clearTimeout(zoomDebounceTimerRef.current);
+          zoomDebounceTimerRef.current = null;
+        }
+
+        canvasElement.removeEventListener("wheel", handleNativeWheel);
         canvas.off("mouse:wheel", handleWheel);
       };
     }, [minZoom, maxZoom, onPanChange, onZoomChange]);
@@ -2166,16 +2239,52 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               | FabricObject
               | undefined;
             if (maskShape) {
-              maskShape.evented = false;
-              maskShape.selectable = false;
-              maskShape.hoverCursor = layer?.locked ? "not-allowed" : "default";
+              // In select mode, allow mask movement, scaling, and rotation
+              const allowMaskTransform =
+                !!layer &&
+                !layer.locked &&
+                layer.mask.enabled &&
+                layer.mask.visible;
+              maskShape.evented = allowMaskTransform;
+              maskShape.selectable = allowMaskTransform;
+              maskShape.hoverCursor = layer?.locked
+                ? "not-allowed"
+                : allowMaskTransform
+                ? "move"
+                : "default";
+              // Enable standard controls in select mode (scaling and rotation)
+              maskShape.hasControls = true;
+              maskShape.hasBorders = true;
+              maskShape.lockRotation = false;
+              maskShape.lockScalingX = false;
+              maskShape.lockScalingY = false;
+              maskShape.lockMovementX = false;
+              maskShape.lockMovementY = false;
             }
           } else if ((obj as any)._isMaskOverlay) {
             const layerId = (obj as any)._maskLayerId as string | undefined;
             const layer = project?.layers.find((l) => l.id === layerId);
-            obj.evented = false;
-            obj.selectable = false;
-            obj.hoverCursor = layer?.locked ? "not-allowed" : "default";
+            // In select mode, allow mask movement, scaling, and rotation
+            const allowMaskTransform =
+              !!layer &&
+              !layer.locked &&
+              layer.mask.enabled &&
+              layer.mask.visible;
+            obj.evented = allowMaskTransform;
+            obj.selectable = allowMaskTransform;
+            obj.hoverCursor = layer?.locked
+              ? "not-allowed"
+              : allowMaskTransform
+              ? "move"
+              : "default";
+            // Enable standard controls in select mode (scaling and rotation)
+            obj.hasControls = true;
+            obj.hasBorders = true;
+            obj.lockRotation = false;
+            obj.lockScalingX = false;
+            obj.lockScalingY = false;
+            obj.lockMovementX = false;
+            obj.lockMovementY = false;
           }
         });
       }
