@@ -1129,17 +1129,23 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       maskShape.off("modified");
 
       maskShape.on("mousedown", () => {
-        (maskShape as any)._dragStart = {
+        (maskShape as any)._transformStart = {
           left: maskShape.left ?? 0,
           top: maskShape.top ?? 0,
+          scaleX: maskShape.scaleX ?? 1,
+          scaleY: maskShape.scaleY ?? 1,
+          angle: maskShape.angle ?? 0,
         };
       });
 
       maskShape.on("moving", () => {
-        if (!(maskShape as any)._dragStart) {
-          (maskShape as any)._dragStart = {
+        if (!(maskShape as any)._transformStart) {
+          (maskShape as any)._transformStart = {
             left: maskShape.left ?? 0,
             top: maskShape.top ?? 0,
+            scaleX: maskShape.scaleX ?? 1,
+            scaleY: maskShape.scaleY ?? 1,
+            angle: maskShape.angle ?? 0,
           };
         }
 
@@ -1152,49 +1158,148 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       });
 
       maskShape.on("modified", () => {
-        const dragStart: { left: number; top: number } = (maskShape as any)
-          ._dragStart ?? { left: 0, top: 0 };
-        const currentLeft = maskShape.left ?? 0;
-        const currentTop = maskShape.top ?? 0;
+        const canvasInstance = fabricCanvasRef.current;
+        if (!canvasInstance) return;
 
-        const diffX = Math.round(currentLeft - dragStart.left);
-        const diffY = Math.round(currentTop - dragStart.top);
-
-        (maskShape as any)._dragStart = undefined;
-
-        if (diffX === 0 && diffY === 0) {
-          maskShape.set({ left: dragStart.left, top: dragStart.top });
-          canvas.requestRenderAll();
-          bringMaskHandlesToFront(fabricObj);
-          return;
-        }
-
-        const canvasWidth = canvas.getWidth();
-        const canvasHeight = canvas.getHeight();
-
-        if (!canvasWidth || !canvasHeight) {
-          maskShape.set({ left: dragStart.left, top: dragStart.top });
-          canvas.requestRenderAll();
-          bringMaskHandlesToFront(fabricObj);
-          return;
-        }
-
-        const previousOffset =
-          (maskShape as any)._appliedOffset ?? initialOffset;
-
-        const nextOffset = {
-          x: previousOffset.x + diffX / canvasWidth,
-          y: previousOffset.y + diffY / canvasHeight,
+        const transformStart = (maskShape as any)._transformStart ?? {
+          left: 0,
+          top: 0,
+          scaleX: 1,
+          scaleY: 1,
+          angle: 0,
         };
 
-        (maskShape as any)._appliedOffset = nextOffset;
+        const currentLeft = maskShape.left ?? 0;
+        const currentTop = maskShape.top ?? 0;
+        const currentScaleX = maskShape.scaleX ?? 1;
+        const currentScaleY = maskShape.scaleY ?? 1;
+        const currentAngle = maskShape.angle ?? 0;
+
+        (maskShape as any)._transformStart = undefined;
+
+        const canvasWidth = canvasInstance.getWidth();
+        const canvasHeight = canvasInstance.getHeight();
+
+        if (!canvasWidth || !canvasHeight) {
+          canvas.requestRenderAll();
+          bringMaskHandlesToFront(fabricObj);
+          return;
+        }
 
         const layerId = objectLayerMapRef.current.get(fabricObj);
+        if (!layerId) return;
 
-        if (layerId) {
-          const currentLayer =
-            project?.layers.find((candidate) => candidate.id === layerId) ??
-            layer;
+        const currentLayer =
+          project?.layers.find((candidate) => candidate.id === layerId) ??
+          layer;
+
+        // Check if this was a scale/rotate operation (not just a move)
+        const wasScaled =
+          Math.abs(currentScaleX - transformStart.scaleX) > 0.001 ||
+          Math.abs(currentScaleY - transformStart.scaleY) > 0.001;
+        const wasRotated = Math.abs(currentAngle - transformStart.angle) > 0.1;
+
+        if (wasScaled || wasRotated) {
+          // Handle scale/rotate: transform all mask points
+          const offX = (currentLayer.mask.offset?.x ?? 0) * canvasWidth;
+          const offY = (currentLayer.mask.offset?.y ?? 0) * canvasHeight;
+
+          // Get original absolute points
+          const originalAbsPoints = currentLayer.mask.path.map(
+            ([nx, ny]) =>
+              [nx * canvasWidth + offX, ny * canvasHeight + offY] as [
+                number,
+                number
+              ]
+          );
+
+          // Calculate center of the original mask
+          let centerX = 0,
+            centerY = 0;
+          originalAbsPoints.forEach(([x, y]) => {
+            centerX += x;
+            centerY += y;
+          });
+          centerX /= originalAbsPoints.length;
+          centerY /= originalAbsPoints.length;
+
+          // Transform each point
+          const angleRad = (currentAngle * Math.PI) / 180;
+          const cos = Math.cos(angleRad);
+          const sin = Math.sin(angleRad);
+
+          const transformedPoints: [number, number][] = originalAbsPoints.map(
+            ([x, y]) => {
+              // Translate to origin
+              const dx = x - centerX;
+              const dy = y - centerY;
+
+              // Apply scale
+              const scaledX = dx * currentScaleX;
+              const scaledY = dy * currentScaleY;
+
+              // Apply rotation
+              const rotatedX = scaledX * cos - scaledY * sin;
+              const rotatedY = scaledX * sin + scaledY * cos;
+
+              // Translate back and apply position offset
+              const finalX =
+                rotatedX + centerX + (currentLeft - transformStart.left);
+              const finalY =
+                rotatedY + centerY + (currentTop - transformStart.top);
+
+              // Convert to normalized coordinates (remove the offset since we baked it into the points)
+              return [
+                Number((finalX / canvasWidth).toFixed(5)),
+                Number((finalY / canvasHeight).toFixed(5)),
+              ] as [number, number];
+            }
+          );
+
+          // Reset mask shape transform
+          maskShape.set({
+            left: 0,
+            top: 0,
+            scaleX: 1,
+            scaleY: 1,
+            angle: 0,
+          });
+
+          // Clear the applied offset since we baked it into the points
+          (maskShape as any)._appliedOffset = { x: 0, y: 0 };
+
+          // Update the mask path and clear the offset (since we baked it into points)
+          onLayerUpdate(layerId, {
+            mask: {
+              ...currentLayer.mask,
+              path: transformedPoints,
+              editorPath: transformedPoints,
+              offset: { x: 0, y: 0 },
+              editorOffset: { x: 0, y: 0 },
+            },
+          });
+        } else {
+          // Handle move only: update offset
+          const diffX = Math.round(currentLeft - transformStart.left);
+          const diffY = Math.round(currentTop - transformStart.top);
+
+          if (diffX === 0 && diffY === 0) {
+            maskShape.set({ left: 0, top: 0 });
+            canvas.requestRenderAll();
+            bringMaskHandlesToFront(fabricObj);
+            return;
+          }
+
+          const previousOffset =
+            (maskShape as any)._appliedOffset ?? initialOffset;
+          const nextOffset = {
+            x: previousOffset.x + diffX / canvasWidth,
+            y: previousOffset.y + diffY / canvasHeight,
+          };
+
+          (maskShape as any)._appliedOffset = nextOffset;
+
+          maskShape.set({ left: 0, top: 0 });
 
           onLayerUpdate(layerId, {
             mask: {
@@ -1203,27 +1308,25 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               editorOffset: nextOffset,
             },
           });
+
+          const handles: Circle[] | undefined = (fabricObj as any)
+            ._maskPointHandles;
+          if (handles?.length) {
+            const offX = nextOffset.x * canvasWidth;
+            const offY = nextOffset.y * canvasHeight;
+            handles.forEach((handle, index) => {
+              const point = currentLayer.mask.path[index];
+              if (!point) return;
+              handle.set({
+                left: point[0] * canvasWidth + offX,
+                top: point[1] * canvasHeight + offY,
+              });
+            });
+          }
         }
 
-        maskShape.set({ left: 0, top: 0 });
         canvas.requestRenderAll();
         bringMaskHandlesToFront(fabricObj);
-
-        const handles: Circle[] | undefined = (fabricObj as any)
-          ._maskPointHandles;
-        if (handles?.length) {
-          const offX = nextOffset.x * canvas.width;
-          const offY = nextOffset.y * canvas.height;
-          handles.forEach((handle, index) => {
-            const point = layer.mask.path[index];
-            if (!point) return;
-            handle.set({
-              left: point[0] * canvas.width + offX,
-              top: point[1] * canvas.height + offY,
-            });
-          });
-          canvas.requestRenderAll();
-        }
       });
 
       createMaskPointHandles(maskShape, layer, fabricObj);
@@ -1674,13 +1777,13 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         if (!canvas) return;
 
         // In pan tool mode, always pan
-        // In select mode, pan with space key or middle mouse button
+        // In select or mask mode, pan with space key or middle mouse button
         const isPanTool = canvasState?.tool === "pan";
         const shouldPan =
           isPanTool || isSpaceKeyDownRef.current || event.button === 1;
 
         if (!shouldPan) {
-          // Normal behavior - allow object selection
+          // Normal behavior - allow object selection or mask drawing
           return;
         }
 
@@ -1736,6 +1839,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             } else {
               canvas.setCursor("default");
             }
+          } else if (canvasState?.tool === "mask") {
+            if (isSpaceKeyDownRef.current) {
+              canvas.setCursor("grab");
+            } else {
+              canvas.setCursor("crosshair");
+            }
           }
         }
 
@@ -1743,10 +1852,14 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         window.removeEventListener("mouseup", handleWindowMouseUp);
       };
 
-      // Space key handling for pan mode in select tool
+      // Space key handling for pan mode in select and mask tools
       const handleKeyDown = (event: KeyboardEvent) => {
         const canvas = fabricCanvasRef.current;
-        if (!canvas || canvasState?.tool !== "select") return;
+        if (
+          !canvas ||
+          (canvasState?.tool !== "select" && canvasState?.tool !== "mask")
+        )
+          return;
         if (event.code === "Space" && !isSpaceKeyDownRef.current) {
           // Prevent space from triggering other actions
           const activeElement = document.activeElement as HTMLElement;
@@ -1766,7 +1879,12 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           const objects = canvas.getObjects();
 
           objects.forEach((obj) => {
-            if (objectLayerMapRef.current.has(obj)) {
+            if (
+              objectLayerMapRef.current.has(obj) ||
+              (obj as any)._isMaskHandle ||
+              (obj as any)._isMaskOverlay ||
+              (obj as any)._isMaskTransformBox
+            ) {
               (obj as any)._wasSelectable = obj.selectable;
               (obj as any)._wasEvented = obj.evented;
               obj.selectable = false;
@@ -1817,6 +1935,50 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             canvas.hoverCursor = "move";
             if (!isPanning && canvas.upperCanvasEl) {
               canvas.setCursor("default");
+            }
+            canvas.renderAll();
+          } else if (canvasState?.tool === "mask") {
+            // Restore mask tool state
+            canvas.selection = false;
+            const objects = canvas.getObjects();
+            objects.forEach((obj) => {
+              if (
+                objectLayerMapRef.current.has(obj) ||
+                (obj as any)._isMaskHandle ||
+                (obj as any)._isMaskOverlay ||
+                (obj as any)._isMaskTransformBox
+              ) {
+                obj.selectable =
+                  (obj as any)._wasSelectable !== undefined
+                    ? (obj as any)._wasSelectable
+                    : false;
+                obj.evented =
+                  (obj as any)._wasEvented !== undefined
+                    ? (obj as any)._wasEvented
+                    : false;
+                delete (obj as any)._wasSelectable;
+                delete (obj as any)._wasEvented;
+
+                // Restore proper cursor for mask mode
+                if ((obj as any)._isMaskHandle) {
+                  const layerId = (obj as any)._maskLayerId;
+                  const layer = project?.layers.find((l) => l.id === layerId);
+                  obj.hoverCursor = layer?.locked ? "not-allowed" : "move";
+                } else if (
+                  (obj as any)._isMaskOverlay ||
+                  (obj as any)._isMaskTransformBox
+                ) {
+                  const layerId = (obj as any)._maskLayerId;
+                  const layer = project?.layers.find((l) => l.id === layerId);
+                  obj.hoverCursor = layer?.locked ? "not-allowed" : "move";
+                }
+              }
+            });
+
+            canvas.defaultCursor = "crosshair";
+            canvas.hoverCursor = "crosshair";
+            if (!isPanning && canvas.upperCanvasEl) {
+              canvas.setCursor("crosshair");
             }
             canvas.renderAll();
           }
