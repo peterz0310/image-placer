@@ -40,6 +40,8 @@ interface FabricCanvasProps {
   detectedMasks?: DetectedMask[];
   showDetections?: boolean;
   onDetectionClick?: (maskId: string) => void;
+  colorPickMode?: boolean;
+  onColorPick?: (point: { x: number; y: number }) => void;
 }
 
 export interface FabricCanvasRef {
@@ -72,6 +74,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       detectedMasks = [],
       showDetections = false,
       onDetectionClick,
+      colorPickMode = false,
+      onColorPick,
     },
     ref
   ) => {
@@ -2601,6 +2605,21 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       };
 
       const handleMouseDown = (e: any) => {
+        if (colorPickMode && onColorPick) {
+          if ((e.e as MouseEvent).button !== 0) {
+            return;
+          }
+
+          const pointer = canvas.getPointer(e.e);
+          const normalizedPoint = {
+            x: Math.min(Math.max(pointer.x / canvas.width, 0), 1),
+            y: Math.min(Math.max(pointer.y / canvas.height, 0), 1),
+          };
+
+          onColorPick(normalizedPoint);
+          return;
+        }
+
         if (canvasState?.tool === "mask" && canvasState?.selectedLayerId) {
           const target = e.target as FabricObject | undefined;
 
@@ -2803,8 +2822,10 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         }
       };
     }, [
+      colorPickMode,
       canvasState?.tool,
       canvasState?.selectedLayerId,
+      onColorPick,
       onLayerUpdate,
       project,
     ]);

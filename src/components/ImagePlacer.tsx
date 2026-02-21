@@ -10,6 +10,7 @@ import { ProjectExporter, renderComposite } from "@/utils/export";
 import { CANVAS_MAX_WIDTH, CANVAS_MAX_HEIGHT } from "@/constants/canvas";
 import { useHistory, useHistoryKeyboard } from "@/hooks/useHistory";
 import { getSegmentationInstance } from "@/utils/segmentation";
+import { createMaskFromColorSelection } from "@/utils/colorSelection";
 import JSZip from "jszip";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -36,6 +37,7 @@ import {
   Keyboard,
   LifeBuoy,
   Sparkles,
+  Pipette,
 } from "lucide-react";
 
 const ZOOM_MIN = 0.25;
@@ -252,6 +254,10 @@ export default function ImagePlacer() {
     }
   }, [project?.layers]);
 
+  useEffect(() => {
+    colorPickCacheRef.current = null;
+  }, [project?.base.imageData]);
+
   const [canvasState, setCanvasState] = useState<CanvasState>({
     zoom: 1,
     pan: { x: 0, y: 0 },
@@ -285,8 +291,16 @@ export default function ImagePlacer() {
   const [detectionPointCount, setDetectionPointCount] = useState(16);
   const [detectionMaskExpansion, setDetectionMaskExpansion] = useState(10);
 
+  const [colorPickTolerance, setColorPickTolerance] = useState(0.08);
+  const [colorPickPointCount, setColorPickPointCount] = useState(32);
+  const [isColorPickMode, setIsColorPickMode] = useState(false);
+
   const tagUpdateTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
   const previewGenerationRef = useRef<symbol | null>(null);
+  const colorPickCacheRef = useRef<{
+    imageDataUrl: string;
+    imageData: ImageData;
+  } | null>(null);
 
   useHistoryKeyboard(undo, redo, canUndo, canRedo);
 
@@ -552,6 +566,12 @@ export default function ImagePlacer() {
         // Clear selection when no layer is selected
         fabricCanvasRef.current.clearSelection();
       }
+    }
+  }, [canvasState.selectedLayerId]);
+
+  useEffect(() => {
+    if (!canvasState.selectedLayerId) {
+      setIsColorPickMode(false);
     }
   }, [canvasState.selectedLayerId]);
 
@@ -1284,6 +1304,117 @@ export default function ImagePlacer() {
     setShowDetections(false);
   }, []);
 
+  const getBaseImageData = useCallback(async () => {
+    if (!project?.base.imageData) {
+      throw new Error("No base image available for color selection");
+    }
+
+    const cached = colorPickCacheRef.current;
+    if (cached && cached.imageDataUrl === project.base.imageData) {
+      return cached.imageData;
+    }
+
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = project.base.imageData!;
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Unable to read base image pixels");
+    }
+
+    context.drawImage(image, 0, 0);
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+
+    colorPickCacheRef.current = {
+      imageDataUrl: project.base.imageData,
+      imageData,
+    };
+
+    return imageData;
+  }, [project]);
+
+  const handleColorPick = useCallback(
+    async (point: { x: number; y: number }) => {
+      if (!project || !canvasState.selectedLayerId) {
+        setError("Select a layer before using Color Pick Mask.");
+        return;
+      }
+
+      const layer = project.layers.find((item) => item.id === canvasState.selectedLayerId);
+      if (!layer || layer.locked) {
+        setError("Unlock and select a layer before applying a color-picked mask.");
+        return;
+      }
+
+      setError(null);
+
+      try {
+        const imageData = await getBaseImageData();
+        const result = createMaskFromColorSelection(imageData, point.x, point.y, {
+          tolerance: colorPickTolerance,
+          maxPoints: colorPickPointCount,
+        });
+
+        if (!result) {
+          setError("No connected region found for that color. Try increasing tolerance.");
+          return;
+        }
+
+        updateProject((prev) => {
+          if (!prev) return null;
+
+          return {
+            ...prev,
+            layers: prev.layers.map((currentLayer) =>
+              currentLayer.id === canvasState.selectedLayerId
+                ? {
+                    ...currentLayer,
+                    mask: {
+                      enabled: true,
+                      visible: true,
+                      path: result.path,
+                      feather: 0.5,
+                      smoothing: 1,
+                      offset: { x: 0, y: 0 },
+                      editorPath: result.path,
+                      editorSmoothing: 1,
+                      editorOffset: { x: 0, y: 0 },
+                    },
+                  }
+                : currentLayer
+            ),
+            metadata: {
+              ...prev.metadata!,
+              modified: new Date().toISOString(),
+            },
+          };
+        }, "Apply color-picked mask");
+      } catch (error) {
+        setError(
+          `Failed to create color mask: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`
+        );
+      }
+    },
+    [
+      project,
+      canvasState.selectedLayerId,
+      colorPickTolerance,
+      colorPickPointCount,
+      getBaseImageData,
+      updateProject,
+    ]
+  );
+
   const invertProjectHorizontally = useCallback(async () => {
     if (!project) {
       return;
@@ -1796,6 +1927,69 @@ export default function ImagePlacer() {
                         <span>+1%</span>
                         <span>+100%</span>
                       </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-gray-200 space-y-2">
+                      <div className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                        Color Pick Mask
+                      </div>
+                      <label className="flex items-center justify-between text-xs text-gray-700 mb-1">
+                        <span>Tolerance: {(colorPickTolerance * 100).toFixed(0)}%</span>
+                        <span className="text-gray-500">Higher = wider selection</span>
+                      </label>
+                      <input
+                        type="range"
+                        min="0.01"
+                        max="0.5"
+                        step="0.01"
+                        value={colorPickTolerance}
+                        onChange={(e) =>
+                          setColorPickTolerance(parseFloat(e.target.value))
+                        }
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                      />
+
+                      <label className="flex items-center justify-between text-xs text-gray-700 mb-1">
+                        <span>Mask Points: {colorPickPointCount}</span>
+                        <span className="text-gray-500">Higher = more detail</span>
+                      </label>
+                      <input
+                        type="range"
+                        min="8"
+                        max="96"
+                        step="2"
+                        value={colorPickPointCount}
+                        onChange={(e) =>
+                          setColorPickPointCount(parseInt(e.target.value, 10))
+                        }
+                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!canvasState.selectedLayerId) {
+                            setError("Select a layer before using Color Pick Mask.");
+                            return;
+                          }
+                          setError(null);
+                          setIsColorPickMode((prev) => !prev);
+                        }}
+                        className={`w-full px-3 py-2 rounded-lg text-sm font-medium border flex items-center justify-center gap-2 transition-colors ${
+                          isColorPickMode
+                            ? "bg-amber-100 border-amber-400 text-amber-800"
+                            : "bg-white border-amber-300 text-amber-700 hover:bg-amber-50"
+                        }`}
+                      >
+                        <Pipette size={16} />
+                        {isColorPickMode ? "Exit Color Pick" : "Enable Color Pick"}
+                      </button>
+
+                      {isColorPickMode && (
+                        <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                          Click the canvas to sample a connected color region and apply it to the selected layer mask.
+                        </div>
+                      )}
                     </div>
                     <button
                       onClick={detectNails}
@@ -2515,6 +2709,10 @@ export default function ImagePlacer() {
                   }
                 }
 
+                if (tool !== "select") {
+                  setIsColorPickMode(false);
+                }
+
                 setCanvasState((prev) => ({ ...prev, tool }));
               }}
               onTransformModeChange={(transformMode) =>
@@ -2564,6 +2762,8 @@ export default function ImagePlacer() {
                 detectedMasks={detectedMasks}
                 showDetections={showDetections}
                 onDetectionClick={assignMaskToLayer}
+                colorPickMode={isColorPickMode}
+                onColorPick={handleColorPick}
               />
             </div>
           ) : (
