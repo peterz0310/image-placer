@@ -1526,13 +1526,17 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         }
       };
 
-      const handleObjectMoving = (e: any) => {
-        const obj = e.target as FabricObject | undefined;
-        if (!obj || dragOpacityMapRef.current.has(obj)) {
-          return;
+      const getInteractionTarget = (e: any): FabricObject | undefined => {
+        const directTarget = e?.target as FabricObject | undefined;
+        if (directTarget) {
+          return directTarget;
         }
+        return e?.transform?.target as FabricObject | undefined;
+      };
 
-        if ((obj as any).type !== "image") {
+      const handleObjectInteractionStart = (e: any) => {
+        const obj = getInteractionTarget(e);
+        if (!obj || dragOpacityMapRef.current.has(obj)) {
           return;
         }
 
@@ -1649,17 +1653,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         calculateNormalizedScale();
       });
 
-      canvas.on("object:moving", handleObjectMoving);
+      canvas.on("before:transform", handleObjectInteractionStart);
+      canvas.on("object:moving", handleObjectInteractionStart);
+      canvas.on("object:scaling", handleObjectInteractionStart);
+      canvas.on("object:rotating", handleObjectInteractionStart);
       canvas.on("mouse:up", handleMouseUpAfterDrag);
-
-      // Add additional debugging events for skew mode
-      canvas.on("object:scaling", (e) => {
-        // Additional event handling for skew mode can be added here if needed
-      });
-
-      canvas.on("object:skewing", (e) => {
-        // Skewing events can be tracked here for debugging if needed
-      });
 
       // Handle selection events
       canvas.on("selection:created", (e) => {
@@ -1704,7 +1702,10 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       });
 
       return () => {
-        canvas.off("object:moving", handleObjectMoving);
+        canvas.off("before:transform", handleObjectInteractionStart);
+        canvas.off("object:moving", handleObjectInteractionStart);
+        canvas.off("object:scaling", handleObjectInteractionStart);
+        canvas.off("object:rotating", handleObjectInteractionStart);
         canvas.off("mouse:up", handleMouseUpAfterDrag);
         canvas.dispose();
         fabricCanvasRef.current = null;

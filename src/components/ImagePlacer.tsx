@@ -1445,7 +1445,7 @@ export default function ImagePlacer() {
               : layer.transform.skewX,
           skewY:
             typeof layer.transform.skewY === "number"
-              ? roundFraction(layer.transform.skewY)
+              ? roundFraction(-layer.transform.skewY)
               : layer.transform.skewY,
         };
 
@@ -1685,6 +1685,14 @@ export default function ImagePlacer() {
             </>
           ) : (
             <>
+              <button
+                onClick={() => replaceBaseInputRef.current?.click()}
+                className="px-4 py-2 bg-teal-600 hover:bg-teal-700 rounded text-sm flex items-center gap-2"
+                title="Swap base image and keep current layers"
+              >
+                <Square size={16} />
+                Swap Base
+              </button>
               <button
                 onClick={openPreview}
                 disabled={isGeneratingPreview}
