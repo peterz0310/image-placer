@@ -9,7 +9,6 @@ import {
   Polygon,
   Circle,
   Path,
-  Rect,
   Text,
 } from "fabric";
 import { Project, Layer, CanvasState, DetectedMask } from "@/types";
@@ -20,6 +19,9 @@ const MASK_HANDLE_RADIUS = 3;
 const MASK_HANDLE_COLOR = "rgba(0, 168, 107, 0.5)";
 const MASK_HANDLE_SELECTED_COLOR = "#f97316";
 const MASK_EDGE_INSERT_THRESHOLD = 25;
+const MASK_OVERLAY_FILL = "rgba(0, 255, 0, 0.2)";
+const MASK_OVERLAY_STROKE = "#00ff00";
+const MASK_OVERLAY_STROKE_WIDTH = 1;
 
 interface FabricCanvasProps {
   project: Project | null;
@@ -119,6 +121,9 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       layerCount: number;
     }>({ baseImageData: undefined, layerCount: 0 });
     const projectRef = useRef<Project | null>(project);
+    const canvasStateRef = useRef(canvasState);
+    const onLayerUpdateRef = useRef(onLayerUpdate);
+    const onLayerSelectedRef = useRef(onLayerSelected);
 
     const PAN_PRECISION = 2;
     const ZOOM_EPSILON = 0.0001;
@@ -483,6 +488,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         !!layer &&
         !layer.locked &&
         canvasState?.tool === "mask" &&
+        canvasState?.selectedLayerId === layer.id &&
         layer.mask.enabled &&
         layer.mask.visible &&
         layer.mask.path.length > 0
@@ -544,6 +550,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           selectedHandle.set({ fill: MASK_HANDLE_COLOR });
           (selectedHandle as any)._isSelectedMaskHandle = false;
           selectedMaskHandleRef.current = null;
+          selectedMaskHandleInfoRef.current = null;
         }
       }
       (fabricObj as any)._maskPointHandles = [];
@@ -637,22 +644,107 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       canvas.requestRenderAll();
     };
 
-    // --- Mask Transform Box State ---
-    const maskTransformBoxRef = useRef<Rect | null>(null);
-    const maskTransformLayerIdRef = useRef<string | null>(null);
+    const getMaskAbsolutePoints = (
+      layer: Layer,
+      canvas: Canvas
+    ): [number, number][] => {
+      const offX = (layer.mask.offset?.x ?? 0) * canvas.width;
+      const offY = (layer.mask.offset?.y ?? 0) * canvas.height;
+      return layer.mask.path.map(
+        ([x, y]) => [x * canvas.width + offX, y * canvas.height + offY] as [
+          number,
+          number
+        ]
+      );
+    };
 
-    const removeMaskTransformBox = (layerId?: string) => {
+    const createMaskOverlayShape = (
+      absPoints: [number, number][],
+      smoothing: number,
+      layer: Layer
+    ): FabricObject => {
+      if (smoothing > 0 && absPoints.length >= 3) {
+        const d = MaskRenderer.toSmoothedClosedPathD(absPoints, smoothing);
+        return new Path(d, {
+          fill: MASK_OVERLAY_FILL,
+          stroke: MASK_OVERLAY_STROKE,
+          strokeWidth: MASK_OVERLAY_STROKE_WIDTH,
+          selectable: !layer.locked,
+          evented: !layer.locked,
+          objectCaching: false,
+        }) as FabricObject;
+      }
+
+      const maskPoints = absPoints.map(([x, y]) => ({ x, y }));
+      return new Polygon(maskPoints as any, {
+        fill: MASK_OVERLAY_FILL,
+        stroke: MASK_OVERLAY_STROKE,
+        strokeWidth: MASK_OVERLAY_STROKE_WIDTH,
+        selectable: !layer.locked,
+        evented: !layer.locked,
+        objectCaching: false,
+      }) as unknown as FabricObject;
+    };
+
+    const removeMaskOverlaysForLayer = (
+      layerId: string,
+      primaryLayerObj?: FabricObject
+    ) => {
       const canvas = fabricCanvasRef.current;
       if (!canvas) return;
-      const box = maskTransformBoxRef.current;
-      if (!box) return;
-      if (layerId && maskTransformLayerIdRef.current !== layerId) {
+
+      const overlays = canvas.getObjects().filter((candidate) => {
+        if (!(candidate as any)._isMaskOverlay) return false;
+        return (candidate as any)._maskLayerId === layerId;
+      });
+
+      overlays.forEach((overlay) => {
+        if (canvas.getActiveObject() === overlay) {
+          canvas.discardActiveObject();
+        }
+        overlay.off();
+        canvas.remove(overlay);
+        dragOpacityMapRef.current.delete(overlay);
+        if (lastDraggedObjectRef.current === overlay) {
+          lastDraggedObjectRef.current = null;
+        }
+      });
+
+      if (primaryLayerObj) {
+        (primaryLayerObj as any)._maskPolygon = undefined;
+      } else {
+        const layerObject = canvas
+          .getObjects()
+          .find((candidate) => objectLayerMapRef.current.get(candidate) === layerId);
+        if (layerObject) {
+          (layerObject as any)._maskPolygon = undefined;
+        }
+      }
+    };
+
+    const syncMaskOverlayForLayer = (fabricObj: FabricObject, layer: Layer) => {
+      const canvas = fabricCanvasRef.current;
+      if (!canvas) return;
+
+      const shouldRenderMask =
+        layer.mask.enabled && layer.mask.visible && layer.mask.path.length > 0;
+
+      if (!shouldRenderMask) {
+        removeMaskHandles(fabricObj);
+        removeMaskOverlaysForLayer(layer.id, fabricObj);
         return;
       }
-      canvas.remove(box);
-      maskTransformBoxRef.current = null;
-      maskTransformLayerIdRef.current = null;
-      canvas.requestRenderAll();
+
+      const absPoints = getMaskAbsolutePoints(layer, canvas);
+      const smoothing = layer.mask.smoothing ?? 0;
+
+      removeMaskOverlaysForLayer(layer.id, fabricObj);
+      const maskShape = createMaskOverlayShape(absPoints, smoothing, layer);
+      (fabricObj as any)._maskPolygon = maskShape;
+      canvas.add(maskShape);
+
+      configureMaskOverlay(maskShape, layer, fabricObj);
+      bringMaskHandlesToFront(fabricObj);
     };
 
     const createMaskPointHandles = (
@@ -663,7 +755,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const canvas = fabricCanvasRef.current;
       if (!canvas) return;
       if (layer.mask.path.length === 0) {
-        removeMaskTransformBox(layer.id);
         return;
       }
 
@@ -677,129 +768,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         selectedMaskHandleInfoRef.current.layerId === layer.id
           ? selectedMaskHandleInfoRef.current
           : null;
-
-      // --- Mask Transform Box ---
-      // Only show in mask mode, not locked, and only one at a time
-      if (
-        canvasState?.tool === "mask" &&
-        !layer.locked &&
-        canvasState.selectedLayerId === layer.id
-      ) {
-        const absPoints = layer.mask.path.map(([nx, ny]) => [
-          nx * canvas.width + offX,
-          ny * canvas.height + offY,
-        ]);
-
-        let rawMinX = Infinity,
-          rawMinY = Infinity,
-          rawMaxX = -Infinity,
-          rawMaxY = -Infinity;
-        absPoints.forEach(([x, y]) => {
-          rawMinX = Math.min(rawMinX, x);
-          rawMinY = Math.min(rawMinY, y);
-          rawMaxX = Math.max(rawMaxX, x);
-          rawMaxY = Math.max(rawMaxY, y);
-        });
-
-        if (!Number.isFinite(rawMinX) || !Number.isFinite(rawMinY)) {
-          removeMaskTransformBox(layer.id);
-        } else {
-          const rawWidth = Math.max(rawMaxX - rawMinX, 1e-3);
-          const rawHeight = Math.max(rawMaxY - rawMinY, 1e-3);
-
-          removeMaskTransformBox();
-
-          const box = new Rect({
-            left: rawMinX + rawWidth / 2,
-            top: rawMinY + rawHeight / 2,
-            width: rawWidth,
-            height: rawHeight,
-            originX: "center",
-            originY: "center",
-            fill: "rgba(0,0,0,0)",
-            stroke: "rgba(0,0,0,0.15)",
-            strokeDashArray: [4, 4],
-            selectable: true,
-            evented: true,
-            hasBorders: true,
-            hasControls: true,
-            lockScalingFlip: true,
-            lockRotation: false,
-            lockScalingX: false,
-            lockScalingY: false,
-            lockMovementX: false,
-            lockMovementY: false,
-            hoverCursor: "pointer",
-            objectCaching: false,
-          });
-          box.padding = 8;
-          (box as any)._isMaskTransformBox = true;
-          (box as any)._maskLayerId = layer.id;
-
-          box.on("mousedown", (evt) => {
-            evt?.e?.stopPropagation?.();
-          });
-
-          box.on("modified", () => {
-            const canvasInstance = fabricCanvasRef.current;
-            if (!canvasInstance) return;
-
-            const scaledWidth = Math.max(
-              (box.width ?? rawWidth) * (box.scaleX ?? 1),
-              1e-6
-            );
-            const scaledHeight = Math.max(
-              (box.height ?? rawHeight) * (box.scaleY ?? 1),
-              1e-6
-            );
-            const cx = box.left ?? 0;
-            const cy = box.top ?? 0;
-            const angle = ((box.angle ?? 0) * Math.PI) / 180;
-            const cosB = Math.cos(angle);
-            const sinB = Math.sin(angle);
-
-            const origCx = rawMinX + rawWidth / 2;
-            const origCy = rawMinY + rawHeight / 2;
-
-            const newPoints: [number, number][] = absPoints.map(([x, y]) => {
-              const px = x - origCx;
-              const py = y - origCy;
-
-              const tx = (px / rawWidth) * scaledWidth;
-              const ty = (py / rawHeight) * scaledHeight;
-
-              const rx = tx * cosB - ty * sinB + cx;
-              const ry = tx * sinB + ty * cosB + cy;
-
-              const normX = (rx - offX) / canvasInstance.width;
-              const normY = (ry - offY) / canvasInstance.height;
-
-              return [Number(normX.toFixed(5)), Number(normY.toFixed(5))] as [
-                number,
-                number
-              ];
-            });
-
-            removeMaskTransformBox(layer.id);
-
-            onLayerUpdate(layer.id, {
-              mask: {
-                ...layer.mask,
-                path: newPoints,
-                editorPath: newPoints,
-              },
-            });
-          });
-
-          canvas.add(box);
-          maskTransformBoxRef.current = box;
-          maskTransformLayerIdRef.current = layer.id;
-          // Don't auto-select the box on creation
-          // canvas.setActiveObject(box);
-        }
-      } else {
-        removeMaskTransformBox(layer.id);
-      }
 
       // --- Mask Handles ---
       const handles: Circle[] = layer.mask.path.map(([nx, ny], index) => {
@@ -820,6 +788,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           selectable: !layer.locked && shouldShowMaskHandles(layer),
           evented: !layer.locked && shouldShowMaskHandles(layer),
           visible: shouldShowMaskHandles(layer),
+          objectCaching: false,
         });
 
         (handle as any)._maskPointIndex = index;
@@ -1091,38 +1060,40 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const initialOffset = layer.mask.offset ?? { x: 0, y: 0 };
       (maskShape as any)._appliedOffset = { ...initialOffset };
 
-      const inMaskMode = canvasState?.tool === "mask";
       const inSelectMode = canvasState?.tool === "select";
-      // Allow mask drag in mask mode OR select mode (for movability)
-      const allowMaskDrag =
-        (inMaskMode || inSelectMode) &&
+      // Mask overlays are only directly transformable in select mode.
+      const allowMaskTransform =
+        inSelectMode &&
         !layer.locked &&
         layer.mask.enabled &&
         layer.mask.visible;
 
       maskShape.hasBorders = true;
-      maskShape.objectCaching = true;
+      maskShape.objectCaching = false;
       maskShape.borderScaleFactor = 0.5;
       maskShape.hoverCursor = layer.locked
         ? "not-allowed"
-        : allowMaskDrag
+        : allowMaskTransform
         ? "move"
         : "default";
-      maskShape.evented = allowMaskDrag;
-      maskShape.selectable = allowMaskDrag;
+      maskShape.evented = allowMaskTransform;
+      maskShape.selectable = allowMaskTransform;
 
-      // In select mode, enable standard controls (scaling and rotation)
-      // In mask mode, keep controls hidden for point editing
-      if (inSelectMode) {
+      // Show transform controls only when select mode can actually transform this mask.
+      if (inSelectMode && allowMaskTransform) {
         maskShape.hasControls = true;
         maskShape.lockScalingX = false;
         maskShape.lockScalingY = false;
         maskShape.lockRotation = false;
+        maskShape.lockMovementX = false;
+        maskShape.lockMovementY = false;
       } else {
         maskShape.hasControls = false;
         maskShape.lockScalingX = true;
         maskShape.lockScalingY = true;
         maskShape.lockRotation = true;
+        maskShape.lockMovementX = true;
+        maskShape.lockMovementY = true;
       }
 
       (maskShape as any)._isMaskOverlay = true;
@@ -1140,6 +1111,15 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           scaleY: maskShape.scaleY ?? 1,
           angle: maskShape.angle ?? 0,
         };
+
+        const handles: Circle[] | undefined = (fabricObj as any)
+          ._maskPointHandles;
+        (maskShape as any)._dragHandleStartPositions = handles?.map(
+          (handle) => ({
+            left: handle.left ?? 0,
+            top: handle.top ?? 0,
+          })
+        );
       });
 
       maskShape.on("moving", () => {
@@ -1158,6 +1138,33 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
         if (snappedLeft !== maskShape.left || snappedTop !== maskShape.top) {
           maskShape.set({ left: snappedLeft, top: snappedTop });
+        }
+
+        const transformStart = (maskShape as any)._transformStart;
+        const handleStartPositions = (maskShape as any)
+          ._dragHandleStartPositions as { left: number; top: number }[] | undefined;
+        const handles: Circle[] | undefined = (fabricObj as any)
+          ._maskPointHandles;
+
+        if (
+          transformStart &&
+          handleStartPositions &&
+          handles &&
+          handles.length === handleStartPositions.length
+        ) {
+          const diffX = (maskShape.left ?? 0) - transformStart.left;
+          const diffY = (maskShape.top ?? 0) - transformStart.top;
+
+          handles.forEach((handle, index) => {
+            const start = handleStartPositions[index];
+            handle.set({
+              left: start.left + diffX,
+              top: start.top + diffY,
+            });
+            handle.setCoords();
+          });
+
+          canvas.requestRenderAll();
         }
       });
 
@@ -1180,6 +1187,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         const currentAngle = maskShape.angle ?? 0;
 
         (maskShape as any)._transformStart = undefined;
+        (maskShape as any)._dragHandleStartPositions = undefined;
 
         const canvasWidth = canvasInstance.getWidth();
         const canvasHeight = canvasInstance.getHeight();
@@ -1268,6 +1276,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             scaleY: 1,
             angle: 0,
           });
+          maskShape.setCoords();
 
           // Clear the applied offset since we baked it into the points
           (maskShape as any)._appliedOffset = { x: 0, y: 0 };
@@ -1289,6 +1298,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
           if (diffX === 0 && diffY === 0) {
             maskShape.set({ left: 0, top: 0 });
+            maskShape.setCoords();
             canvas.requestRenderAll();
             bringMaskHandlesToFront(fabricObj);
             return;
@@ -1304,6 +1314,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
           (maskShape as any)._appliedOffset = nextOffset;
 
           maskShape.set({ left: 0, top: 0 });
+          maskShape.setCoords();
 
           onLayerUpdate(layerId, {
             mask: {
@@ -1325,6 +1336,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
                 left: point[0] * canvasWidth + offX,
                 top: point[1] * canvasHeight + offY,
               });
+              handle.setCoords();
             });
           }
         }
@@ -1349,8 +1361,10 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       clearSelection: () => {
         const canvas = fabricCanvasRef.current;
         if (canvas) {
-          canvas.discardActiveObject();
-          canvas.renderAll();
+          if (canvas.getActiveObject()) {
+            canvas.discardActiveObject();
+            canvas.requestRenderAll();
+          }
         }
       },
       exportCanvas: (scale = 1) => {
@@ -1464,6 +1478,18 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
     useEffect(() => {
       projectRef.current = project;
     }, [project]);
+
+    useEffect(() => {
+      canvasStateRef.current = canvasState;
+    }, [canvasState]);
+
+    useEffect(() => {
+      onLayerUpdateRef.current = onLayerUpdate;
+    }, [onLayerUpdate]);
+
+    useEffect(() => {
+      onLayerSelectedRef.current = onLayerSelected;
+    }, [onLayerSelected]);
 
     useEffect(() => {
       if (!canvasRef.current || fabricCanvasRef.current) return;
@@ -1628,7 +1654,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               normalizedScaleY,
             };
 
-            onLayerUpdate(layerId, {
+            onLayerUpdateRef.current(layerId, {
               transform: normalizedTransform,
             });
           } catch (error) {
@@ -1644,7 +1670,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               skewY: obj.skewY || 0,
             };
 
-            onLayerUpdate(layerId, {
+            onLayerUpdateRef.current(layerId, {
               transform: normalizedTransform,
             });
           }
@@ -1669,10 +1695,14 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             return;
           }
 
-          const layerId = objectLayerMapRef.current.get(obj);
-          if (layerId && onLayerSelected) {
+          const layerId =
+            objectLayerMapRef.current.get(obj) ??
+            ((obj as any)._isMaskOverlay
+              ? ((obj as any)._maskLayerId as string | undefined)
+              : undefined);
+          if (layerId && onLayerSelectedRef.current) {
             // Notify parent that a layer has been selected on canvas
-            onLayerSelected(layerId);
+            onLayerSelectedRef.current(layerId);
           }
         }
       });
@@ -1686,17 +1716,21 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             return;
           }
 
-          const layerId = objectLayerMapRef.current.get(obj);
-          if (layerId && onLayerSelected) {
+          const layerId =
+            objectLayerMapRef.current.get(obj) ??
+            ((obj as any)._isMaskOverlay
+              ? ((obj as any)._maskLayerId as string | undefined)
+              : undefined);
+          if (layerId && onLayerSelectedRef.current) {
             // Notify parent that a different layer has been selected on canvas
-            onLayerSelected(layerId);
+            onLayerSelectedRef.current(layerId);
           }
         }
       });
 
       canvas.on("selection:cleared", () => {
         // When selection is cleared, deselect mask handle
-        if (canvasState?.tool === "mask") {
+        if (canvasStateRef.current?.tool === "mask") {
           selectMaskHandle(null);
         }
       });
@@ -1710,7 +1744,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         canvas.dispose();
         fabricCanvasRef.current = null;
       };
-    }, [onLayerUpdate]);
+    }, []);
 
     // Pan handling effect - register directly on canvas DOM element to survive canvas.clear()
     useEffect(() => {
@@ -1887,8 +1921,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             if (
               objectLayerMapRef.current.has(obj) ||
               (obj as any)._isMaskHandle ||
-              (obj as any)._isMaskOverlay ||
-              (obj as any)._isMaskTransformBox
+              (obj as any)._isMaskOverlay
             ) {
               (obj as any)._wasSelectable = obj.selectable;
               (obj as any)._wasEvented = obj.evented;
@@ -1950,8 +1983,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               if (
                 objectLayerMapRef.current.has(obj) ||
                 (obj as any)._isMaskHandle ||
-                (obj as any)._isMaskOverlay ||
-                (obj as any)._isMaskTransformBox
+                (obj as any)._isMaskOverlay
               ) {
                 obj.selectable =
                   (obj as any)._wasSelectable !== undefined
@@ -1969,10 +2001,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
                   const layerId = (obj as any)._maskLayerId;
                   const layer = project?.layers.find((l) => l.id === layerId);
                   obj.hoverCursor = layer?.locked ? "not-allowed" : "move";
-                } else if (
-                  (obj as any)._isMaskOverlay ||
-                  (obj as any)._isMaskTransformBox
-                ) {
+                } else if ((obj as any)._isMaskOverlay) {
                   const layerId = (obj as any)._maskLayerId;
                   const layer = project?.layers.find((l) => l.id === layerId);
                   obj.hoverCursor = layer?.locked ? "not-allowed" : "move";
@@ -2317,38 +2346,38 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               | FabricObject
               | undefined;
             if (maskShape) {
-              const allowMaskDrag =
-                !!layer &&
-                !layer.locked &&
-                layer.mask.enabled &&
-                layer.mask.visible;
-              maskShape.evented = allowMaskDrag;
-              maskShape.selectable = allowMaskDrag;
+              maskShape.evented = false;
+              maskShape.selectable = false;
               maskShape.hoverCursor = layer?.locked
                 ? "not-allowed"
-                : allowMaskDrag
-                ? "move"
                 : "default";
-              if (allowMaskDrag) {
+              maskShape.hasControls = false;
+              maskShape.hasBorders = true;
+              maskShape.lockRotation = true;
+              maskShape.lockScalingX = true;
+              maskShape.lockScalingY = true;
+              maskShape.lockMovementX = true;
+              maskShape.lockMovementY = true;
+              if (showHandles) {
                 bringMaskHandlesToFront(obj);
               }
             }
           } else if ((obj as any)._isMaskOverlay) {
             const layerId = (obj as any)._maskLayerId as string | undefined;
             const layer = project?.layers.find((l) => l.id === layerId);
-            const allowMaskDrag =
-              !!layer &&
-              !layer.locked &&
-              layer.mask.enabled &&
-              layer.mask.visible;
-            obj.evented = allowMaskDrag;
-            obj.selectable = allowMaskDrag;
+            obj.evented = false;
+            obj.selectable = false;
             obj.hoverCursor = layer?.locked
               ? "not-allowed"
-              : allowMaskDrag
-              ? "move"
               : "default";
-            if (allowMaskDrag && layerId) {
+            obj.hasControls = false;
+            obj.hasBorders = true;
+            obj.lockRotation = true;
+            obj.lockScalingX = true;
+            obj.lockScalingY = true;
+            obj.lockMovementX = true;
+            obj.lockMovementY = true;
+            if (layerId && layerId === canvasState.selectedLayerId) {
               const layerObject = canvas
                 .getObjects()
                 .find(
@@ -2420,13 +2449,13 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
                 ? "move"
                 : "default";
               // Enable standard controls in select mode (scaling and rotation)
-              maskShape.hasControls = true;
+              maskShape.hasControls = allowMaskTransform;
               maskShape.hasBorders = true;
-              maskShape.lockRotation = false;
-              maskShape.lockScalingX = false;
-              maskShape.lockScalingY = false;
-              maskShape.lockMovementX = false;
-              maskShape.lockMovementY = false;
+              maskShape.lockRotation = !allowMaskTransform;
+              maskShape.lockScalingX = !allowMaskTransform;
+              maskShape.lockScalingY = !allowMaskTransform;
+              maskShape.lockMovementX = !allowMaskTransform;
+              maskShape.lockMovementY = !allowMaskTransform;
             }
           } else if ((obj as any)._isMaskOverlay) {
             const layerId = (obj as any)._maskLayerId as string | undefined;
@@ -2445,19 +2474,19 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
               ? "move"
               : "default";
             // Enable standard controls in select mode (scaling and rotation)
-            obj.hasControls = true;
+            obj.hasControls = allowMaskTransform;
             obj.hasBorders = true;
-            obj.lockRotation = false;
-            obj.lockScalingX = false;
-            obj.lockScalingY = false;
-            obj.lockMovementX = false;
-            obj.lockMovementY = false;
+            obj.lockRotation = !allowMaskTransform;
+            obj.lockScalingX = !allowMaskTransform;
+            obj.lockScalingY = !allowMaskTransform;
+            obj.lockMovementX = !allowMaskTransform;
+            obj.lockMovementY = !allowMaskTransform;
           }
         });
       }
 
       canvas.requestRenderAll();
-    }, [canvasState?.tool, project]);
+    }, [canvasState?.tool, canvasState?.selectedLayerId, project]);
 
     // Helper function to notify parent of mask state changes
     const notifyMaskStateChange = () => {
@@ -2546,8 +2575,6 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         canvas.remove(circle);
       });
 
-      removeMaskTransformBox();
-
       maskDrawingRef.current = {
         isDrawing: false,
         points: [],
@@ -2630,18 +2657,10 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
             }
 
             if ((target as any)._isMaskOverlay) {
-              return; // interacting with mask overlay (offset drag)
-            }
-            if ((target as any)._isMaskTransformBox) {
-              return; // interacting with mask transform box
+              return; // interacting with mask overlay
             }
           } else {
-            // Clicking on empty canvas - deselect transform box and mask handle
-            const box = maskTransformBoxRef.current;
-            if (box && canvas) {
-              canvas.discardActiveObject();
-              canvas.requestRenderAll();
-            }
+            // Clicking on empty canvas - deselect mask handle
             selectMaskHandle(null);
           }
 
@@ -3017,55 +3036,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         applyTransformModeToObject(fabricImg, layer);
 
         canvas.add(fabricImg);
-
-        // Add mask visualization if mask is enabled and visible
-        if (
-          layer.mask.enabled &&
-          layer.mask.visible &&
-          layer.mask.path.length > 0
-        ) {
-          const offX = (layer.mask.offset?.x ?? 0) * canvas.width;
-          const offY = (layer.mask.offset?.y ?? 0) * canvas.height;
-          const absPoints: [number, number][] = layer.mask.path.map(
-            ([x, y]) =>
-              [x * canvas.width + offX, y * canvas.height + offY] as [
-                number,
-                number
-              ]
-          );
-
-          const smoothing = layer.mask.smoothing ?? 0;
-          let maskShape: FabricObject;
-          if (smoothing > 0 && absPoints.length >= 3) {
-            const d = MaskRenderer.toSmoothedClosedPathD(absPoints, smoothing);
-            // Use Path for smoothed preview
-            const path = new Path(d, {
-              fill: "rgba(0, 255, 0, 0.2)",
-              stroke: "#00ff00",
-              strokeWidth: 1,
-              // solid stroke for performance
-              selectable: !layer.locked,
-              evented: !layer.locked,
-            });
-            maskShape = path as FabricObject;
-          } else {
-            const maskPoints = absPoints.map(([x, y]) => ({ x, y }));
-            maskShape = new Polygon(maskPoints as any, {
-              fill: "rgba(0, 255, 0, 0.2)",
-              stroke: "#00ff00",
-              strokeWidth: 1,
-              // solid stroke for performance
-              selectable: !layer.locked,
-              evented: !layer.locked,
-            }) as unknown as FabricObject;
-          }
-
-          // Store reference to mask overlay for this layer
-          (fabricImg as any)._maskPolygon = maskShape;
-          canvas.add(maskShape);
-          configureMaskOverlay(maskShape, layer, fabricImg);
-          bringMaskHandlesToFront(fabricImg);
-        }
+        syncMaskOverlayForLayer(fabricImg, layer);
 
         canvas.renderAll();
       } catch (error) {
@@ -3107,59 +3078,7 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
         });
 
         // Update mask visualization
-        const existingMaskPolygon = (fabricObj as any)._maskPolygon;
-        if (existingMaskPolygon) {
-          canvas.remove(existingMaskPolygon);
-          (fabricObj as any)._maskPolygon = undefined;
-        }
-
-        removeMaskHandles(fabricObj);
-
-        if (
-          layer.mask.enabled &&
-          layer.mask.visible &&
-          layer.mask.path.length > 0
-        ) {
-          const offX = (layer.mask.offset?.x ?? 0) * canvas.width;
-          const offY = (layer.mask.offset?.y ?? 0) * canvas.height;
-          const absPoints: [number, number][] = layer.mask.path.map(
-            ([x, y]) =>
-              [x * canvas.width + offX, y * canvas.height + offY] as [
-                number,
-                number
-              ]
-          );
-
-          const smoothing = layer.mask.smoothing ?? 0;
-          let maskShape: FabricObject;
-          if (smoothing > 0 && absPoints.length >= 3) {
-            const d = MaskRenderer.toSmoothedClosedPathD(absPoints, smoothing);
-            const path = new Path(d, {
-              fill: "rgba(0, 255, 0, 0.2)",
-              stroke: "#00ff00",
-              strokeWidth: 1,
-              // solid stroke for performance
-              selectable: !layer.locked,
-              evented: !layer.locked,
-            });
-            maskShape = path as FabricObject;
-          } else {
-            const maskPoints = absPoints.map(([x, y]) => ({ x, y }));
-            maskShape = new Polygon(maskPoints as any, {
-              fill: "rgba(0, 255, 0, 0.2)",
-              stroke: "#00ff00",
-              strokeWidth: 1,
-              // solid stroke for performance
-              selectable: !layer.locked,
-              evented: !layer.locked,
-            }) as unknown as FabricObject;
-          }
-
-          (fabricObj as any)._maskPolygon = maskShape;
-          canvas.add(maskShape);
-          configureMaskOverlay(maskShape, layer, fabricObj);
-          bringMaskHandlesToFront(fabricObj);
-        }
+        syncMaskOverlayForLayer(fabricObj, layer);
 
         // Use requestAnimationFrame to batch renders
         requestAnimationFrame(() => {
@@ -3178,13 +3097,8 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       );
 
       if (fabricObj) {
-        // Remove associated mask polygon if it exists
-        const maskPolygon = (fabricObj as any)._maskPolygon;
-        if (maskPolygon) {
-          canvas.remove(maskPolygon);
-        }
-
         removeMaskHandles(fabricObj);
+        removeMaskOverlaysForLayer(layerId, fabricObj);
 
         canvas.remove(fabricObj);
         objectLayerMapRef.current.delete(fabricObj);
@@ -3196,8 +3110,13 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
       const canvas = fabricCanvasRef.current;
       if (!canvas) return;
 
-      // Clear current selection first
-      canvas.discardActiveObject();
+      const activeObject = canvas.getActiveObject();
+      const activeLayerId = activeObject
+        ? objectLayerMapRef.current.get(activeObject)
+        : undefined;
+      if (activeLayerId === layerId) {
+        return;
+      }
 
       const objects = canvas.getObjects();
       const fabricObj = objects.find(
@@ -3206,9 +3125,11 @@ const FabricCanvas = forwardRef<FabricCanvasRef, FabricCanvasProps>(
 
       if (fabricObj) {
         canvas.setActiveObject(fabricObj);
+        canvas.requestRenderAll();
+      } else if (activeObject) {
+        canvas.discardActiveObject();
+        canvas.requestRenderAll();
       }
-
-      canvas.renderAll();
     };
 
     const exportCanvasAsDataURL = async (

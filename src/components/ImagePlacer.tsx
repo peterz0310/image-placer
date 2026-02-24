@@ -232,13 +232,23 @@ export default function ImagePlacer() {
   const historyProject = getCurrentProject();
   const [localProject, setLocalProject] = useState<Project | null>(null);
 
-  const project = historyProject !== null ? historyProject : localProject;
+  const project = localProject;
+  const historyProjectRef = useRef<Project | null>(historyProject);
+  const saveStateRef = useRef(saveState);
 
   useEffect(() => {
     if (historyProject !== null) {
       setLocalProject(historyProject);
     }
   }, [historyProject]);
+
+  useEffect(() => {
+    historyProjectRef.current = historyProject;
+  }, [historyProject]);
+
+  useEffect(() => {
+    saveStateRef.current = saveState;
+  }, [saveState]);
 
   useEffect(() => {
     if (project?.layers) {
@@ -407,13 +417,18 @@ export default function ImagePlacer() {
       updater: (prev: Project | null) => Project | null,
       description = "Update project"
     ) => {
-      const newProject = updater(project);
-      if (newProject !== project) {
-        setLocalProject(newProject);
-        saveState(newProject, description);
-      }
+      setLocalProject((prevLocalProject) => {
+        const sourceProject = prevLocalProject ?? historyProjectRef.current;
+        const nextProject = updater(sourceProject);
+
+        if (nextProject !== sourceProject) {
+          saveStateRef.current(nextProject, description);
+        }
+
+        return nextProject;
+      });
     },
-    [project, saveState]
+    []
   );
 
   const allMasksAtMaxSmoothing = useMemo(() => {
@@ -511,10 +526,10 @@ export default function ImagePlacer() {
               modified: new Date().toISOString(),
             },
           };
-        }, `Update tag: ${project?.layers.find((l) => l.id === layerId)?.name || "Unknown"}`);
+        }, "Update tag");
       }, 500); // 500ms debounce
     },
-    [updateProject, project]
+    [updateProject]
   );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -580,10 +595,13 @@ export default function ImagePlacer() {
    */
   const handleLayerUpdate = useCallback(
     (layerId: string, updates: Partial<Layer>) => {
-      if (!project) return;
-
       updateProject((prev) => {
         if (!prev) return null;
+
+        const targetLayer = prev.layers.find((layer) => layer.id === layerId);
+        if (!targetLayer) {
+          return prev;
+        }
 
         return {
           ...prev,
@@ -595,9 +613,9 @@ export default function ImagePlacer() {
             modified: new Date().toISOString(),
           },
         };
-      }, `Update layer: ${project.layers.find((l) => l.id === layerId)?.name || "Unknown"}`);
+      }, `Update layer: ${layerId}`);
     },
-    [project, updateProject]
+    [updateProject]
   );
 
   /**
@@ -1037,9 +1055,15 @@ export default function ImagePlacer() {
               author: hydratedProject.metadata?.author,
             },
           };
+          clearHistory(); // Clear previous history when loading a new project
           setLocalProject(loadedProject);
           saveState(loadedProject, "Load ZIP project");
-          clearHistory(); // Clear previous history when loading a new project
+
+          // Reset canvas selection for newly loaded project
+          setCanvasState((prev) => ({
+            ...prev,
+            selectedLayerId: undefined,
+          }));
         } catch (zipError) {
           console.error("Error loading ZIP project:", zipError);
           setError(
@@ -1078,9 +1102,9 @@ export default function ImagePlacer() {
                 author: hydratedProject.metadata?.author,
               },
             };
+            clearHistory(); // Clear previous history when loading a new project
             setLocalProject(loadedProject);
             saveState(loadedProject, "Load JSON project");
-            clearHistory(); // Clear previous history when loading a new project
 
             // Reset canvas state for new project
             setCanvasState((prev) => ({
@@ -1608,6 +1632,29 @@ export default function ImagePlacer() {
     }
   }, []);
 
+  const handleMaskFinished = useCallback(() => {
+    // Switch back to transform mode when mask drawing is finished
+    setCanvasState((prev) => ({
+      ...prev,
+      tool: "select",
+    }));
+  }, []);
+
+  const handleCanvasLayerSelected = useCallback((layerId: string) => {
+    // When a layer is selected on canvas, update the layer selection and switch to transform mode
+    setCanvasState((prev) => {
+      if (prev.selectedLayerId === layerId && prev.tool === "select") {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        selectedLayerId: layerId,
+        tool: "select",
+      };
+    });
+  }, []);
+
   // Handle canvas zoom keyboard shortcuts (Cmd+/Cmd-)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -2077,12 +2124,20 @@ export default function ImagePlacer() {
                         : "hover:bg-gray-50"
                     }`}
                     onClick={() => {
-                      setCanvasState((prev) => ({
-                        ...prev,
-                        selectedLayerId: layer.id,
-                        tool: "select", // Switch to transform mode when selecting a layer
-                      }));
-                      fabricCanvasRef.current?.selectLayer(layer.id);
+                      setCanvasState((prev) => {
+                        if (
+                          prev.selectedLayerId === layer.id &&
+                          prev.tool === "select"
+                        ) {
+                          return prev;
+                        }
+
+                        return {
+                          ...prev,
+                          selectedLayerId: layer.id,
+                          tool: "select", // Switch to transform mode when selecting a layer
+                        };
+                      });
                     }}
                   >
                     <div className="flex justify-between items-center mb-2">
@@ -2173,21 +2228,6 @@ export default function ImagePlacer() {
                                 (l) => l.id === layer.id
                               );
                               if (!targetLayer) return prev;
-
-                              const wasLocked = targetLayer.locked;
-
-                              // If we're unlocking and this layer is selected, make sure it becomes selectable
-                              if (
-                                wasLocked &&
-                                canvasState.selectedLayerId === layer.id
-                              ) {
-                                // Force canvas to update selection after unlocking
-                                setTimeout(() => {
-                                  fabricCanvasRef.current?.selectLayer(
-                                    layer.id
-                                  );
-                                }, 50);
-                              }
 
                               return {
                                 ...prev,
@@ -2747,21 +2787,8 @@ export default function ImagePlacer() {
                 selectedLayerId={canvasState.selectedLayerId}
                 transformMode={canvasState.transformMode}
                 canvasState={canvasState}
-                onMaskFinished={() => {
-                  // Switch back to transform mode when mask drawing is finished
-                  setCanvasState((prev) => ({
-                    ...prev,
-                    tool: "select",
-                  }));
-                }}
-                onLayerSelected={(layerId) => {
-                  // When a layer is selected on canvas, update the layer selection and switch to transform mode
-                  setCanvasState((prev) => ({
-                    ...prev,
-                    selectedLayerId: layerId,
-                    tool: "select",
-                  }));
-                }}
+                onMaskFinished={handleMaskFinished}
+                onLayerSelected={handleCanvasLayerSelected}
                 onMaskStateChange={setMaskDrawingState}
                 onPanChange={handlePanChange}
                 onZoomChange={handleZoomChange}
@@ -3012,14 +3039,6 @@ export default function ImagePlacer() {
               onUpdateLayer={(updates) => {
                 if (canvasState.selectedLayerId) {
                   handleLayerUpdate(canvasState.selectedLayerId, updates);
-                  // Update the fabric canvas as well
-                  const updatedLayer = {
-                    ...project.layers.find(
-                      (l) => l.id === canvasState.selectedLayerId
-                    )!,
-                    ...updates,
-                  };
-                  fabricCanvasRef.current?.updateLayer(updatedLayer);
                 }
               }}
             />
