@@ -100,6 +100,59 @@ The `normalizedScaleX`/`normalizedScaleY` values allow templates to scale cleanl
 - **Tailwind CSS** for layout and styling
 - **JSZip 3.10** for project packaging
 
+## Docker
+
+The repo now includes:
+
+- `Dockerfile` with `dev` and `prod` targets
+- `docker-compose.yml` with profile-based services
+
+### Development Mode (hot reload + host-mounted code)
+
+```bash
+docker compose --profile dev up --build
+```
+
+- App URL (default): [http://localhost:3001](http://localhost:3001)
+- Source code is bind-mounted (`.:/app`) so edits on your laptop reload in the container.
+- `node_modules` and `.next` stay in Docker volumes to avoid host/container conflicts.
+- Change dev host port (example `3010`):
+  ```bash
+  DEV_PORT=3010 docker compose --profile dev up --build
+  ```
+
+Stop dev mode:
+
+```bash
+docker compose --profile dev down
+```
+
+### Production Mode (optimized build + local network)
+
+```bash
+docker compose --profile prod up --build -d
+```
+
+- App URL on your laptop (default): [http://localhost:3001](http://localhost:3001)
+- App URL from other devices on your LAN (default): `http://<your-laptop-ip>:3001`
+- The production image runs the standalone Next.js server with `NODE_ENV=production`.
+- Change prod host port (example `8080`):
+  ```bash
+  PROD_PORT=8080 docker compose --profile prod up --build -d
+  ```
+
+Stop prod mode:
+
+```bash
+docker compose --profile prod down
+```
+
+Optional cleanup:
+
+```bash
+docker compose down -v
+```
+
 ## Development
 
 - `npm run dev` – start the development server
